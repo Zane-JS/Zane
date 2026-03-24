@@ -12,6 +12,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <regex>
+#include <sstream>
 
 // V8 headers
 #include "v8.h"
@@ -116,6 +118,8 @@ class Runtime {
 
         // Initialize Buffer module (global object)
         z8::module::Buffer::initialize(p_isolate, context);
+
+        p_isolate->SetHostImportModuleDynamicallyCallback(HostImportModuleDynamicallyCallback);
     }
 
     ~Runtime() {
@@ -469,11 +473,52 @@ class Runtime {
             return module;
         }
 
-        // Handle relative imports (very basic for now)
-        // In a real implementation, we'd read the file and compile it as a module
         p_isolate->ThrowException(
             v8::String::NewFromUtf8(p_isolate, ("Module not found: " + specifier_str).c_str()).ToLocalChecked());
         return v8::MaybeLocal<v8::Module>();
+    }
+
+    static v8::MaybeLocal<v8::Promise> HostImportModuleDynamicallyCallback(
+        v8::Local<v8::Context> context, v8::Local<v8::Data> host_defined_options,
+        v8::Local<v8::Value> resource_name, v8::Local<v8::String> specifier,
+        v8::Local<v8::FixedArray> import_assertions) {
+        v8::Isolate* p_isolate = v8::Isolate::GetCurrent();
+        v8::HandleScope handle_scope(p_isolate);
+
+        v8::Local<v8::Promise::Resolver> resolver;
+        if (!v8::Promise::Resolver::New(context).ToLocal(&resolver)) {
+            return v8::MaybeLocal<v8::Promise>();
+        }
+
+        v8::MaybeLocal<v8::Module> maybe_module = ResolveModuleCallback(context, specifier, import_assertions, v8::Local<v8::Module>());
+        
+        if (maybe_module.IsEmpty()) {
+            v8::Local<v8::Value> error = v8::Exception::Error(v8::String::NewFromUtf8Literal(p_isolate, "Module not found"));
+            (void)resolver->Reject(context, error);
+            return resolver->GetPromise();
+        }
+
+        v8::Local<v8::Module> module = maybe_module.ToLocalChecked();
+        
+        if (module->GetStatus() == v8::Module::kUninstantiated) {
+            if (!module->InstantiateModule(context, ResolveModuleCallback).FromMaybe(false)) {
+                (void)resolver->Reject(context, v8::Exception::Error(v8::String::NewFromUtf8Literal(p_isolate, "Module instantiation failed")));
+                return resolver->GetPromise();
+            }
+        }
+        
+        if (module->GetStatus() == v8::Module::kInstantiated) {
+            v8::MaybeLocal<v8::Value> result = module->Evaluate(context);
+            if (result.IsEmpty()) {
+                (void)resolver->Reject(context, v8::Exception::Error(v8::String::NewFromUtf8Literal(p_isolate, "Module evaluation failed")));
+                return resolver->GetPromise();
+            }
+        }
+        
+        v8::Local<v8::Value> ns = module->GetModuleNamespace();
+        (void)resolver->Resolve(context, ns);
+
+        return resolver->GetPromise();
     }
 
     bool Run(const std::string& source, const std::string& filename) {
@@ -604,8 +649,59 @@ class Runtime {
             if (line.empty())
                 continue;
 
+            // Simple Wrap-and-Rewrite for ESM imports in REPL
+            // import fs from "node:fs" -> var fs = (await import("node:fs")).default
+            // import { a, b } from "mod" -> var { a, b } = await import("mod")
+            std::string rewritten = line;
+            std::regex import_default_re(R"(import\s+([a-zA-Z0-9_$]+)\s+from\s+(['"].+?['"]))");
+            std::regex import_named_re(R"(import\s*\{\s*([^}]+)\s*\}\s*from\s+(['"].+?['"]))");
+            std::regex import_star_re(R"(import\s*\*\s*as\s+([a-zA-Z0-9_$]+)\s+from\s+(['"].+?['"]))");
+
+            bool is_import = false;
+            if (std::regex_search(line, import_default_re)) {
+                rewritten = std::regex_replace(line, import_default_re, "globalThis.$1 = (await import($2)).default || (await import($2)); return globalThis.$1;");
+                is_import = true;
+            } else if (std::regex_search(line, import_named_re)) {
+                // For named imports, we assigned to globalThis. Extracting names from regex
+                std::smatch match;
+                if (std::regex_search(line, match, import_named_re)) {
+                    std::string names = match[1].str();
+                    std::string mod = match[2].str();
+                    rewritten = "const _m = await import(" + mod + "); ";
+                    // Split names by comma
+                    std::stringstream ss(names);
+                    std::string name;
+                    while(std::getline(ss, name, ',')) {
+                        // Trim name
+                        name.erase(0, name.find_first_not_of(" \t\r\n"));
+                        name.erase(name.find_last_not_of(" \t\r\n") + 1);
+                        if (!name.empty()) {
+                            rewritten += "globalThis." + name + " = _m." + name + "; ";
+                        }
+                    }
+                    rewritten += "return undefined;";
+                }
+                is_import = true;
+            } else if (std::regex_search(line, import_star_re)) {
+                rewritten = std::regex_replace(line, import_star_re, "globalThis.$1 = await import($2); return globalThis.$1;");
+                is_import = true;
+            }
+
+            // If it's an import or contains await, we need to wrap it to support top-level await in scripts
+            if (is_import || rewritten.find("await") != std::string::npos) {
+                // To preserve 'var' declarations globally, we don't wrap in an async function entirely
+                // but instead we can use a trick or simply rely on the fact that 'import()' is a promise.
+                // However, 'await' is only valid in async functions or top-level modules.
+                // Since this is a Script, we wrap it:
+                if (is_import) {
+                    rewritten = "(async () => { " + rewritten + " })()";
+                } else {
+                    rewritten = "(async () => { return (" + rewritten + "); })()";
+                }
+            }
+
             v8::TryCatch try_catch(p_isolate);
-            v8::Local<v8::String> source = v8::String::NewFromUtf8(p_isolate, line.c_str()).ToLocalChecked();
+            v8::Local<v8::String> source = v8::Local<v8::String>::Cast(v8::String::NewFromUtf8(p_isolate, rewritten.c_str()).ToLocalChecked());
             v8::Local<v8::Script> script;
             if (!v8::Script::Compile(context, source).ToLocal(&script)) {
                 ReportException(p_isolate, &try_catch);
@@ -616,6 +712,33 @@ class Runtime {
             if (!script->Run(context).ToLocal(&result)) {
                 ReportException(p_isolate, &try_catch);
                 continue;
+            }
+
+            // Handle Promises (for rewritten imports or explicit Promises)
+            if (!result.IsEmpty() && result->IsPromise()) {
+                v8::Local<v8::Promise> promise = result.As<v8::Promise>();
+                while (promise->State() == v8::Promise::kPending) {
+                    p_isolate->PerformMicrotaskCheckpoint();
+                    // Process task queue while waiting
+                    while (!z8::TaskQueue::getInstance().isEmpty()) {
+                        z8::Task* p_task = z8::TaskQueue::getInstance().dequeue();
+                        if (p_task) {
+                            p_task->m_runner(p_isolate, context, p_task);
+                            delete p_task;
+                        }
+                    }
+                    if (promise->State() == v8::Promise::kPending) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    }
+                }
+                if (promise->State() == v8::Promise::kFulfilled) {
+                    result = promise->Result();
+                } else if (promise->State() == v8::Promise::kRejected) {
+                    v8::Local<v8::Value> exception = promise->Result();
+                    p_isolate->ThrowException(exception);
+                    ReportException(p_isolate, &try_catch);
+                    continue;
+                }
             }
 
             if (!result->IsUndefined()) {

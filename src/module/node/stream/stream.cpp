@@ -39,6 +39,10 @@ v8::Local<v8::ObjectTemplate> Stream::createTemplate(v8::Isolate* p_isolate) {
     tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "addAbortSignal"), v8::FunctionTemplate::New(p_isolate, addAbortSignal));
     tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "getDefaultHighWaterMark"), v8::FunctionTemplate::New(p_isolate, getDefaultHighWaterMark));
     tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "setDefaultHighWaterMark"), v8::FunctionTemplate::New(p_isolate, setDefaultHighWaterMark));
+    tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "isErrored"), v8::FunctionTemplate::New(p_isolate, isErrored));
+    tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "isReadable"), v8::FunctionTemplate::New(p_isolate, isReadable));
+    tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "isDisturbed"), v8::FunctionTemplate::New(p_isolate, isDisturbed));
+    tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "destroy"), v8::FunctionTemplate::New(p_isolate, destroy));
 
     v8::Local<v8::ObjectTemplate> promises_tmpl = v8::ObjectTemplate::New(p_isolate);
     promises_tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "pipeline"), v8::FunctionTemplate::New(p_isolate, pipelinePromise));
@@ -1443,6 +1447,74 @@ void Stream::setDefaultHighWaterMark(const v8::FunctionCallbackInfo<v8::Value>& 
     }
 }
 
+
+// --- Utilities ---
+
+void Stream::isErrored(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    if (args.Length() < 1 || !args[0]->IsObject()) {
+        args.GetReturnValue().Set(false);
+        return;
+    }
+    v8::Local<v8::Object> obj = args[0].As<v8::Object>();
+    if (obj->InternalFieldCount() > 0) {
+        v8::Local<v8::External> ext = obj->GetInternalField(0).As<v8::External>();
+        if (!ext.IsEmpty() && ext->Value()) {
+            StreamInternal* p_internal = static_cast<StreamInternal*>(ext->Value());
+            args.GetReturnValue().Set(p_internal->m_errored);
+            return;
+        }
+    }
+    v8::Local<v8::Value> err_val;
+    if (obj->Get(args.GetIsolate()->GetCurrentContext(), v8::String::NewFromUtf8Literal(args.GetIsolate(), "errored")).ToLocal(&err_val) && err_val->IsTrue()) {
+         args.GetReturnValue().Set(true);
+         return;
+    }
+    args.GetReturnValue().Set(false);
+}
+
+void Stream::isReadable(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    if (args.Length() < 1 || !args[0]->IsObject()) {
+        args.GetReturnValue().Set(false);
+        return;
+    }
+    v8::Local<v8::Object> obj = args[0].As<v8::Object>();
+    v8::Local<v8::Value> readable_val;
+    if (obj->Get(args.GetIsolate()->GetCurrentContext(), v8::String::NewFromUtf8Literal(args.GetIsolate(), "readable")).ToLocal(&readable_val)) {
+        args.GetReturnValue().Set(readable_val->BooleanValue(args.GetIsolate()));
+        return;
+    }
+    args.GetReturnValue().Set(false);
+}
+
+void Stream::isDisturbed(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    if (args.Length() < 1 || !args[0]->IsObject()) {
+        args.GetReturnValue().Set(false);
+        return;
+    }
+    v8::Local<v8::Object> obj = args[0].As<v8::Object>();
+    if (obj->InternalFieldCount() > 0) {
+        v8::Local<v8::External> ext = obj->GetInternalField(0).As<v8::External>();
+        if (!ext.IsEmpty() && ext->Value()) {
+            StreamInternal* p_internal = static_cast<StreamInternal*>(ext->Value());
+            args.GetReturnValue().Set(p_internal->m_flowing || p_internal->m_bytes_read > 0 || p_internal->m_ended || p_internal->m_closed);
+            return;
+        }
+    }
+    args.GetReturnValue().Set(false);
+}
+
+void Stream::destroy(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    if (args.Length() < 1 || !args[0]->IsObject()) {
+        args.GetReturnValue().Set(args.This());
+        return;
+    }
+    v8::Local<v8::Object> obj = args[0].As<v8::Object>();
+    v8::Local<v8::Value> destroy_val;
+    if (obj->Get(args.GetIsolate()->GetCurrentContext(), v8::String::NewFromUtf8Literal(args.GetIsolate(), "destroy")).ToLocal(&destroy_val) && destroy_val->IsFunction()) {
+        (void)destroy_val.As<v8::Function>()->Call(args.GetIsolate()->GetCurrentContext(), obj, 0, nullptr);
+    }
+    args.GetReturnValue().Set(obj);
+}
 
 // Additional Stream implementations - to be appended to stream.cpp
 

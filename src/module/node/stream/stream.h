@@ -137,6 +137,12 @@ class Stream {
     static void getDefaultHighWaterMark(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void setDefaultHighWaterMark(const v8::FunctionCallbackInfo<v8::Value>& args);
     
+    // Utilities
+    static void isErrored(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void isReadable(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void isDisturbed(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void destroy(const v8::FunctionCallbackInfo<v8::Value>& args);
+    
     // Promises API
     static void pipelinePromise(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void finishedPromise(const v8::FunctionCallbackInfo<v8::Value>& args);

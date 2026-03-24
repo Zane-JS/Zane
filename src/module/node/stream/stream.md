@@ -482,6 +482,22 @@ Returns the default highWaterMark used by streams. Defaults to 65536 (64 KiB), o
 
 Sets the default highWaterMark used by streams.
 
+### `stream.isErrored(stream)`
+
+Returns whether the stream has encountered an error.
+
+### `stream.isReadable(stream)`
+
+Returns whether the stream is readable.
+
+### `stream.isDisturbed(stream)`
+
+Returns whether the stream has been read from or canceled.
+
+### `stream.destroy(stream)`
+
+Destroys the given stream.
+
 ## Promises API
 
 The `stream/promises` API provides Promise-based versions of stream utilities.

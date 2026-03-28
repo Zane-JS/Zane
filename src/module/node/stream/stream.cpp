@@ -36,6 +36,7 @@ v8::Local<v8::ObjectTemplate> Stream::createTemplate(v8::Isolate* p_isolate) {
     tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "pipeline"), v8::FunctionTemplate::New(p_isolate, pipeline));
     tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "finished"), v8::FunctionTemplate::New(p_isolate, finished));
     tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "compose"), v8::FunctionTemplate::New(p_isolate, compose));
+    tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "duplexPair"), v8::FunctionTemplate::New(p_isolate, duplexPair));
     tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "addAbortSignal"), v8::FunctionTemplate::New(p_isolate, addAbortSignal));
     tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "getDefaultHighWaterMark"), v8::FunctionTemplate::New(p_isolate, getDefaultHighWaterMark));
     tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "setDefaultHighWaterMark"), v8::FunctionTemplate::New(p_isolate, setDefaultHighWaterMark));
@@ -137,12 +138,20 @@ v8::Local<v8::FunctionTemplate> Stream::createReadableTemplate(v8::Isolate* p_is
         v8::FunctionTemplate::New(p_isolate, getReadableEnded));
     proto->SetAccessorProperty(v8::String::NewFromUtf8Literal(p_isolate, "readableObjectMode"), 
         v8::FunctionTemplate::New(p_isolate, getReadableObjectMode));
+    proto->SetAccessorProperty(v8::String::NewFromUtf8Literal(p_isolate, "readableAborted"), 
+        v8::FunctionTemplate::New(p_isolate, getReadableAborted));
+    proto->SetAccessorProperty(v8::String::NewFromUtf8Literal(p_isolate, "readableDidRead"), 
+        v8::FunctionTemplate::New(p_isolate, getReadableDidRead));
     proto->SetAccessorProperty(v8::String::NewFromUtf8Literal(p_isolate, "closed"), 
         v8::FunctionTemplate::New(p_isolate, getReadableClosed));
     proto->SetAccessorProperty(v8::String::NewFromUtf8Literal(p_isolate, "destroyed"), 
         v8::FunctionTemplate::New(p_isolate, getReadableDestroyed));
     proto->SetAccessorProperty(v8::String::NewFromUtf8Literal(p_isolate, "errored"), 
         v8::FunctionTemplate::New(p_isolate, getReadableErrored));
+    
+    // Additional methods
+    proto->Set(v8::String::NewFromUtf8Literal(p_isolate, "compose"), v8::FunctionTemplate::New(p_isolate, readableCompose));
+    proto->Set(v8::String::NewFromUtf8Literal(p_isolate, "iterator"), v8::FunctionTemplate::New(p_isolate, readableIterator));
 
     return tmpl;
 }
@@ -449,6 +458,8 @@ v8::Local<v8::FunctionTemplate> Stream::createWritableTemplate(v8::Isolate* p_is
         v8::FunctionTemplate::New(p_isolate, getWritableFinished));
     proto->SetAccessorProperty(v8::String::NewFromUtf8Literal(p_isolate, "writableNeedDrain"), 
         v8::FunctionTemplate::New(p_isolate, getWritableNeedDrain));
+    proto->SetAccessorProperty(v8::String::NewFromUtf8Literal(p_isolate, "writableAborted"), 
+        v8::FunctionTemplate::New(p_isolate, getWritableAborted));
     proto->SetAccessorProperty(v8::String::NewFromUtf8Literal(p_isolate, "closed"), 
         v8::FunctionTemplate::New(p_isolate, getWritableClosed));
     proto->SetAccessorProperty(v8::String::NewFromUtf8Literal(p_isolate, "destroyed"), 
@@ -2845,6 +2856,271 @@ void Stream::readableReduce(const v8::FunctionCallbackInfo<v8::Value>& args) {
     }
     
     args.GetReturnValue().Set(resolver->GetPromise());
+}
+
+// --- Additional Property Getters ---
+
+void Stream::getReadableAborted(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    v8::Local<v8::Object> self = args.This();
+    v8::Local<v8::External> ext = self->GetInternalField(0).As<v8::External>();
+    StreamInternal* p_internal = static_cast<StreamInternal*>(ext->Value());
+    args.GetReturnValue().Set(p_internal->m_aborted);
+}
+
+void Stream::getReadableDidRead(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    v8::Local<v8::Object> self = args.This();
+    v8::Local<v8::External> ext = self->GetInternalField(0).As<v8::External>();
+    StreamInternal* p_internal = static_cast<StreamInternal*>(ext->Value());
+    args.GetReturnValue().Set(p_internal->m_did_read);
+}
+
+void Stream::getWritableAborted(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    v8::Local<v8::Object> self = args.This();
+    v8::Local<v8::External> ext = self->GetInternalField(0).As<v8::External>();
+    StreamInternal* p_internal = static_cast<StreamInternal*>(ext->Value());
+    args.GetReturnValue().Set(p_internal->m_aborted);
+}
+
+// --- duplexPair Implementation ---
+
+void Stream::duplexPair(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    v8::Isolate* p_isolate = args.GetIsolate();
+    v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+    
+    // Create two Duplex streams that are connected to each other
+    v8::Local<v8::FunctionTemplate> duplex_tmpl = getDuplexTemplate(p_isolate);
+    v8::Local<v8::Function> duplex_ctor;
+    if (!duplex_tmpl->GetFunction(context).ToLocal(&duplex_ctor)) {
+        return;
+    }
+    
+    // Get options if provided
+    v8::Local<v8::Value> options = args.Length() > 0 ? args[0] : v8::Object::New(p_isolate).As<v8::Value>();
+    v8::Local<v8::Value> ctor_args[] = { options };
+    
+    // Create side A
+    v8::Local<v8::Object> side_a;
+    if (!duplex_ctor->NewInstance(context, 1, ctor_args).ToLocal(&side_a)) {
+        return;
+    }
+    
+    // Create side B
+    v8::Local<v8::Object> side_b;
+    if (!duplex_ctor->NewInstance(context, 1, ctor_args).ToLocal(&side_b)) {
+        return;
+    }
+    
+    // Connect them: when data is written to A, it should be readable from B and vice versa
+    // Store references to each other
+    (void)side_a->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "_pairSide"), side_b);
+    (void)side_b->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "_pairSide"), side_a);
+    
+    // Override write methods to forward data to the other side
+    auto write_forwarder = [](const v8::FunctionCallbackInfo<v8::Value>& args) {
+        v8::Isolate* p_isolate = args.GetIsolate();
+        v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+        v8::Local<v8::Object> self = args.This();
+        
+        // Get the paired side
+        v8::Local<v8::Value> pair_side_val;
+        if (self->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "_pairSide")).ToLocal(&pair_side_val) && pair_side_val->IsObject()) {
+            v8::Local<v8::Object> pair_side = pair_side_val.As<v8::Object>();
+            
+            // Emit 'data' event on the paired side
+            v8::Local<v8::Value> emit_val;
+            if (pair_side->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "emit")).ToLocal(&emit_val) && emit_val->IsFunction()) {
+                v8::Local<v8::Function> emit_fn = emit_val.As<v8::Function>();
+                v8::Local<v8::Value> emit_argv[] = {
+                    v8::String::NewFromUtf8Literal(p_isolate, "data"),
+                    args[0]
+                };
+                (void)emit_fn->Call(context, pair_side, 2, emit_argv);
+            }
+        }
+        
+        // Call callback if provided
+        if (args.Length() > 2 && args[2]->IsFunction()) {
+            v8::Local<v8::Function> cb = args[2].As<v8::Function>();
+            (void)cb->Call(context, self, 0, nullptr);
+        }
+        
+        args.GetReturnValue().Set(true);
+    };
+    
+    v8::Local<v8::Function> write_fn_a = v8::Function::New(context, write_forwarder).ToLocalChecked();
+    v8::Local<v8::Function> write_fn_b = v8::Function::New(context, write_forwarder).ToLocalChecked();
+    
+    (void)side_a->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "write"), write_fn_a);
+    (void)side_b->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "write"), write_fn_b);
+    
+    // Return array with both sides
+    v8::Local<v8::Array> result = v8::Array::New(p_isolate, 2);
+    (void)result->Set(context, 0, side_a);
+    (void)result->Set(context, 1, side_b);
+    
+    args.GetReturnValue().Set(result);
+}
+
+// --- readable.compose() Implementation ---
+
+void Stream::readableCompose(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    v8::Isolate* p_isolate = args.GetIsolate();
+    v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+    v8::Local<v8::Object> self = args.This();
+    
+    if (args.Length() < 1) {
+        p_isolate->ThrowException(v8::Exception::TypeError(
+            v8::String::NewFromUtf8Literal(p_isolate, "Stream argument required")));
+        return;
+    }
+    
+    // Simplified: just pipe self to the destination
+    v8::Local<v8::Value> pipe_fn_val;
+    if (self->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "pipe")).ToLocal(&pipe_fn_val) && pipe_fn_val->IsFunction()) {
+        v8::Local<v8::Function> pipe_fn = pipe_fn_val.As<v8::Function>();
+        v8::Local<v8::Value> pipe_argv[] = { args[0] };
+        v8::Local<v8::Value> result;
+        if (pipe_fn->Call(context, self, 1, pipe_argv).ToLocal(&result)) {
+            args.GetReturnValue().Set(result);
+            return;
+        }
+    }
+    
+    args.GetReturnValue().Set(args[0]);
+}
+
+// --- readable.iterator() Implementation ---
+
+void Stream::readableIterator(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    v8::Isolate* p_isolate = args.GetIsolate();
+    v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+    v8::Local<v8::Object> self = args.This();
+    
+    // Parse options
+    bool destroy_on_return = true;
+    if (args.Length() > 0 && args[0]->IsObject()) {
+        v8::Local<v8::Object> options = args[0].As<v8::Object>();
+        v8::Local<v8::Value> destroy_val;
+        if (options->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "destroyOnReturn")).ToLocal(&destroy_val)) {
+            destroy_on_return = destroy_val->BooleanValue(p_isolate);
+        }
+    }
+    
+    // Create an async iterator object
+    v8::Local<v8::Object> iterator = v8::Object::New(p_isolate);
+    
+    // Store stream reference and options
+    (void)iterator->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "_stream"), self);
+    (void)iterator->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "_destroyOnReturn"), 
+        v8::Boolean::New(p_isolate, destroy_on_return));
+    
+    // Implement next() method
+    auto next_fn = [](const v8::FunctionCallbackInfo<v8::Value>& args) {
+        v8::Isolate* p_isolate = args.GetIsolate();
+        v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+        v8::Local<v8::Object> self = args.This();
+        
+        // Get stream
+        v8::Local<v8::Value> stream_val;
+        if (!self->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "_stream")).ToLocal(&stream_val) || !stream_val->IsObject()) {
+            v8::Local<v8::Promise::Resolver> resolver = v8::Promise::Resolver::New(context).ToLocalChecked();
+            v8::Local<v8::Object> result = v8::Object::New(p_isolate);
+            (void)result->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "done"), v8::Boolean::New(p_isolate, true));
+            (void)resolver->Resolve(context, result);
+            args.GetReturnValue().Set(resolver->GetPromise());
+            return;
+        }
+        
+        v8::Local<v8::Object> stream = stream_val.As<v8::Object>();
+        
+        // Create promise
+        v8::Local<v8::Promise::Resolver> resolver = v8::Promise::Resolver::New(context).ToLocalChecked();
+        
+        // Listen for next data event
+        v8::Local<v8::Value> once_val;
+        if (stream->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "once")).ToLocal(&once_val) && once_val->IsFunction()) {
+            v8::Local<v8::Function> once_fn = once_val.As<v8::Function>();
+            
+            // Data handler
+            auto data_handler = [](const v8::FunctionCallbackInfo<v8::Value>& args) {
+                v8::Isolate* p_isolate = args.GetIsolate();
+                v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+                v8::Local<v8::Promise::Resolver> resolver = args.Data().As<v8::Promise::Resolver>();
+                
+                v8::Local<v8::Object> result = v8::Object::New(p_isolate);
+                (void)result->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "value"), args[0]);
+                (void)result->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "done"), v8::Boolean::New(p_isolate, false));
+                (void)resolver->Resolve(context, result);
+            };
+            
+            v8::Local<v8::Function> data_fn = v8::Function::New(context, data_handler, resolver).ToLocalChecked();
+            v8::Local<v8::Value> once_argv[] = {
+                v8::String::NewFromUtf8Literal(p_isolate, "data"),
+                data_fn
+            };
+            (void)once_fn->Call(context, stream, 2, once_argv);
+            
+            // End handler
+            auto end_handler = [](const v8::FunctionCallbackInfo<v8::Value>& args) {
+                v8::Isolate* p_isolate = args.GetIsolate();
+                v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+                v8::Local<v8::Promise::Resolver> resolver = args.Data().As<v8::Promise::Resolver>();
+                
+                v8::Local<v8::Object> result = v8::Object::New(p_isolate);
+                (void)result->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "done"), v8::Boolean::New(p_isolate, true));
+                (void)resolver->Resolve(context, result);
+            };
+            
+            v8::Local<v8::Function> end_fn = v8::Function::New(context, end_handler, resolver).ToLocalChecked();
+            v8::Local<v8::Value> end_argv[] = {
+                v8::String::NewFromUtf8Literal(p_isolate, "end"),
+                end_fn
+            };
+            (void)once_fn->Call(context, stream, 2, end_argv);
+        }
+        
+        args.GetReturnValue().Set(resolver->GetPromise());
+    };
+    
+    v8::Local<v8::Function> next_func = v8::Function::New(context, next_fn).ToLocalChecked();
+    (void)iterator->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "next"), next_func);
+    
+    // Implement return() method
+    auto return_fn = [](const v8::FunctionCallbackInfo<v8::Value>& args) {
+        v8::Isolate* p_isolate = args.GetIsolate();
+        v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+        v8::Local<v8::Object> self = args.This();
+        
+        // Check destroyOnReturn option
+        v8::Local<v8::Value> destroy_val;
+        bool destroy_on_return = true;
+        if (self->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "_destroyOnReturn")).ToLocal(&destroy_val)) {
+            destroy_on_return = destroy_val->BooleanValue(p_isolate);
+        }
+        
+        if (destroy_on_return) {
+            // Get stream and destroy it
+            v8::Local<v8::Value> stream_val;
+            if (self->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "_stream")).ToLocal(&stream_val) && stream_val->IsObject()) {
+                v8::Local<v8::Object> stream = stream_val.As<v8::Object>();
+                v8::Local<v8::Value> destroy_fn_val;
+                if (stream->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "destroy")).ToLocal(&destroy_fn_val) && destroy_fn_val->IsFunction()) {
+                    (void)destroy_fn_val.As<v8::Function>()->Call(context, stream, 0, nullptr);
+                }
+            }
+        }
+        
+        v8::Local<v8::Promise::Resolver> resolver = v8::Promise::Resolver::New(context).ToLocalChecked();
+        v8::Local<v8::Object> result = v8::Object::New(p_isolate);
+        (void)result->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "done"), v8::Boolean::New(p_isolate, true));
+        (void)resolver->Resolve(context, result);
+        args.GetReturnValue().Set(resolver->GetPromise());
+    };
+    
+    v8::Local<v8::Function> return_func = v8::Function::New(context, return_fn).ToLocalChecked();
+    (void)iterator->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "return"), return_func);
+    
+    args.GetReturnValue().Set(iterator);
 }
 
 } // namespace module

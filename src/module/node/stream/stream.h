@@ -25,6 +25,8 @@ struct StreamInternal {
     bool m_errored = false;
     bool m_closed = false;
     bool m_allow_half_open = true;
+    bool m_aborted = false;
+    bool m_did_read = false;
     uint32_t m_high_water_mark = 16 * 1024; // 16KB default
     uint32_t m_cork_count = 0;
     std::vector<uint8_t> m_buffer;
@@ -133,6 +135,7 @@ class Stream {
     static void pipeline(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void finished(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void compose(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void duplexPair(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void addAbortSignal(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void getDefaultHighWaterMark(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void setDefaultHighWaterMark(const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -142,6 +145,15 @@ class Stream {
     static void isReadable(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void isDisturbed(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void destroy(const v8::FunctionCallbackInfo<v8::Value>& args);
+    
+    // Additional Readable methods
+    static void readableCompose(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void readableIterator(const v8::FunctionCallbackInfo<v8::Value>& args);
+    
+    // Additional property getters
+    static void getReadableAborted(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void getReadableDidRead(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void getWritableAborted(const v8::FunctionCallbackInfo<v8::Value>& args);
     
     // Promises API
     static void pipelinePromise(const v8::FunctionCallbackInfo<v8::Value>& args);

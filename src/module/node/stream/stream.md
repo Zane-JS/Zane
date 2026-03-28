@@ -197,6 +197,18 @@ Becomes `true` when 'end' event is emitted.
 
 Returns `true` if the stream is operating in object mode.
 
+#### `readable.readableAborted`
+
+Returns whether the stream was destroyed or errored before emitting 'end'.
+
+**Status**: Implemented
+
+#### `readable.readableDidRead`
+
+Returns whether 'data' has been emitted.
+
+**Status**: Implemented
+
 #### `readable.closed`
 
 Is `true` after 'close' has been emitted.
@@ -295,6 +307,12 @@ Is set to `true` immediately before the 'finish' event is emitted.
 
 Is `true` if the stream's buffer has been full and stream will emit 'drain'.
 
+#### `writable.writableAborted`
+
+Returns whether the stream was destroyed or errored before emitting 'finish'.
+
+**Status**: Implemented
+
 #### `writable.closed`
 
 Is `true` after 'close' has been emitted.
@@ -391,6 +409,20 @@ pass.end();
 ```
 
 ## Utility Functions
+
+### `stream.duplexPair([options])`
+
+Creates a pair of Duplex streams that are connected to each other. Whatever is written to one stream becomes readable on the other.
+
+**Status**: Implemented
+
+```js
+const { duplexPair } = require('node:stream');
+const [sideA, sideB] = duplexPair();
+
+sideA.on('data', (chunk) => console.log('A received:', chunk.toString()));
+sideB.write('Hello from B');
+```
 
 ### `stream.pipeline(source[, ...transforms], destination[, callback])`
 

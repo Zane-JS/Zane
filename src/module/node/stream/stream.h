@@ -143,18 +143,37 @@ class Stream {
     // Utilities
     static void isErrored(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void isReadable(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void isWritable(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void isDisturbed(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void destroy(const v8::FunctionCallbackInfo<v8::Value>& args);
+    // Web Streams Interop
+    static void readableFromWeb(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void readableToWeb(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void writableFromWeb(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void writableToWeb(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void duplexFromWeb(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void duplexToWeb(const v8::FunctionCallbackInfo<v8::Value>& args);
     
     // Additional Readable methods
     static void readableCompose(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void readableIterator(const v8::FunctionCallbackInfo<v8::Value>& args);
-    
+    static void readableAsyncIterator(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void readableAsyncDispose(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void readableIsDisturbedStatic(const v8::FunctionCallbackInfo<v8::Value>& args);
+
     // Additional property getters
     static void getReadableAborted(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void getReadableDidRead(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void getWritableAborted(const v8::FunctionCallbackInfo<v8::Value>& args);
-    
+    static void getDuplexAllowHalfOpen(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void setDuplexAllowHalfOpen(const v8::FunctionCallbackInfo<v8::Value>& args);
+
+    // Symbol.asyncDispose for Writable
+    static void writableAsyncDispose(const v8::FunctionCallbackInfo<v8::Value>& args);
+
+    // Transform destroy
+    static void transformDestroy(const v8::FunctionCallbackInfo<v8::Value>& args);
+
     // Promises API
     static void pipelinePromise(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void finishedPromise(const v8::FunctionCallbackInfo<v8::Value>& args);

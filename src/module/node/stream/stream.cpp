@@ -18,6 +18,8 @@ v8::Persistent<v8::FunctionTemplate> Stream::m_writable_tmpl;
 v8::Persistent<v8::FunctionTemplate> Stream::m_duplex_tmpl;
 v8::Persistent<v8::FunctionTemplate> Stream::m_transform_tmpl;
 v8::Persistent<v8::FunctionTemplate> Stream::m_passthrough_tmpl;
+v8::Persistent<v8::FunctionTemplate> Stream::m_web_readable_tmpl;
+v8::Persistent<v8::FunctionTemplate> Stream::m_web_writable_tmpl;
 
 v8::Local<v8::ObjectTemplate> Stream::createTemplate(v8::Isolate* p_isolate) {
     v8::Local<v8::ObjectTemplate> tmpl = v8::ObjectTemplate::New(p_isolate);
@@ -161,10 +163,11 @@ v8::Local<v8::FunctionTemplate> Stream::createReadableTemplate(v8::Isolate* p_is
     // Use a string symbol if GetAsyncDispose is not available in older V8
     proto->Set(v8::Symbol::New(p_isolate, v8::String::NewFromUtf8Literal(p_isolate, "Symbol.asyncDispose")), v8::FunctionTemplate::New(p_isolate, readableAsyncDispose));
 
+    proto->Set(v8::String::NewFromUtf8Literal(p_isolate, "toWeb"), v8::FunctionTemplate::New(p_isolate, readableToWeb));
+
     // Static methods
     tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "from"), v8::FunctionTemplate::New(p_isolate, readableFrom));
     tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "fromWeb"), v8::FunctionTemplate::New(p_isolate, readableFromWeb));
-    tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "toWeb"), v8::FunctionTemplate::New(p_isolate, readableToWeb));
     tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "isDisturbed"), v8::FunctionTemplate::New(p_isolate, readableIsDisturbedStatic));
 
     return tmpl;
@@ -540,9 +543,10 @@ v8::Local<v8::FunctionTemplate> Stream::createWritableTemplate(v8::Isolate* p_is
     // Symbol.asyncDispose
     proto->Set(v8::Symbol::New(p_isolate, v8::String::NewFromUtf8Literal(p_isolate, "Symbol.asyncDispose")), v8::FunctionTemplate::New(p_isolate, writableAsyncDispose));
 
+    proto->Set(v8::String::NewFromUtf8Literal(p_isolate, "toWeb"), v8::FunctionTemplate::New(p_isolate, writableToWeb));
+
     // Static methods
     tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "fromWeb"), v8::FunctionTemplate::New(p_isolate, writableFromWeb));
-    tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "toWeb"), v8::FunctionTemplate::New(p_isolate, writableToWeb));
 
     return tmpl;
 }
@@ -755,9 +759,11 @@ v8::Local<v8::FunctionTemplate> Stream::createDuplexTemplate(v8::Isolate* p_isol
         v8::FunctionTemplate::New(p_isolate, getDuplexAllowHalfOpen),
         v8::FunctionTemplate::New(p_isolate, setDuplexAllowHalfOpen));
 
+    proto->Set(v8::String::NewFromUtf8Literal(p_isolate, "toWeb"), v8::FunctionTemplate::New(p_isolate, duplexToWeb));
+
     // Static methods
     tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "fromWeb"), v8::FunctionTemplate::New(p_isolate, duplexFromWeb));
-    tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "toWeb"), v8::FunctionTemplate::New(p_isolate, duplexToWeb));
+    tmpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "from"), v8::FunctionTemplate::New(p_isolate, duplexFrom));
     
     return tmpl;
 }
@@ -3438,42 +3444,242 @@ void Stream::transformDestroy(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
 // --- Web Streams Interop Stubs ---
 
+// --- Web Streams Interop ---
+
+// Minimal ReadableStream/WritableStream for interop
+namespace {
+    static void webReadableStreamConstructor(const v8::FunctionCallbackInfo<v8::Value>& args) {
+        v8::Isolate* p_isolate = args.GetIsolate();
+        v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+        v8::Local<v8::Object> self = args.This();
+        
+        // Basic implementation: we store the underlying Node stream if this is created via toWeb
+        if (args.Length() > 0 && args[0]->IsObject()) {
+            v8::Local<v8::Object> options = args[0].As<v8::Object>();
+            v8::Local<v8::Value> underlying;
+            if (options->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "_underlying")).ToLocal(&underlying)) {
+                (void)self->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "_underlying"), underlying);
+            }
+        }
+    }
+
+    static void webReadableStreamGetReader(const v8::FunctionCallbackInfo<v8::Value>& args) {
+        v8::Isolate* p_isolate = args.GetIsolate();
+        v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+        v8::Local<v8::Object> self = args.This();
+        
+        v8::Local<v8::Object> reader = v8::Object::New(p_isolate);
+        (void)reader->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "_stream"), self);
+        
+        auto read_fn = [](const v8::FunctionCallbackInfo<v8::Value>& args) {
+            v8::Isolate* p_isolate = args.GetIsolate();
+            v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+            v8::Local<v8::Object> reader = args.This();
+            v8::Local<v8::Value> stream_val;
+            if (!reader->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "_stream")).ToLocal(&stream_val) || !stream_val->IsObject()) return;
+            v8::Local<v8::Object> stream_obj = stream_val.As<v8::Object>();
+            
+            v8::Local<v8::Value> underlying_val;
+            if (stream_obj->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "_underlying")).ToLocal(&underlying_val) && underlying_val->IsObject()) {
+                v8::Local<v8::Object> node_stream = underlying_val.As<v8::Object>();
+                
+                v8::Local<v8::Promise::Resolver> resolver = v8::Promise::Resolver::New(context).ToLocalChecked();
+                v8::Global<v8::Promise::Resolver>* p_resolver_global = new v8::Global<v8::Promise::Resolver>(p_isolate, resolver);
+                v8::Global<v8::Object>* p_stream_global = new v8::Global<v8::Object>(p_isolate, node_stream);
+
+                // Listen for 'data' event once
+                v8::Local<v8::Value> once_fn_val;
+                if (node_stream->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "once")).ToLocal(&once_fn_val) && once_fn_val->IsFunction()) {
+                    auto data_handler = [](const v8::FunctionCallbackInfo<v8::Value>& args) {
+                        v8::Isolate* p_isolate = args.GetIsolate();
+                        v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+                        
+                        v8::Global<v8::Promise::Resolver>* p_res = static_cast<v8::Global<v8::Promise::Resolver>*>(args.Data().As<v8::External>()->Value());
+                        
+                        v8::Local<v8::Object> result = v8::Object::New(p_isolate);
+                        (void)result->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "value"), args[0]);
+                        (void)result->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "done"), v8::Boolean::New(p_isolate, false));
+                        (void)p_res->Get(p_isolate)->Resolve(context, result);
+                    };
+
+                    auto end_handler = [](const v8::FunctionCallbackInfo<v8::Value>& args) {
+                        v8::Isolate* p_isolate = args.GetIsolate();
+                        v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+                        
+                        v8::Global<v8::Promise::Resolver>* p_res = static_cast<v8::Global<v8::Promise::Resolver>*>(args.Data().As<v8::External>()->Value());
+                        
+                        v8::Local<v8::Object> result = v8::Object::New(p_isolate);
+                        (void)result->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "value"), v8::Null(p_isolate));
+                        (void)result->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "done"), v8::Boolean::New(p_isolate, true));
+                        (void)p_res->Get(p_isolate)->Resolve(context, result);
+                    };
+
+                    v8::Local<v8::Value> data_ext = v8::External::New(p_isolate, p_resolver_global);
+
+                    v8::Local<v8::Function> data_fn = v8::Function::New(context, data_handler, data_ext).ToLocalChecked();
+                    v8::Local<v8::Function> end_fn = v8::Function::New(context, end_handler, data_ext).ToLocalChecked();
+
+                    v8::Local<v8::Value> data_argv[] = { v8::String::NewFromUtf8Literal(p_isolate, "data"), data_fn };
+                    (void)once_fn_val.As<v8::Function>()->Call(context, node_stream, 2, data_argv);
+
+                    v8::Local<v8::Value> end_argv[] = { v8::String::NewFromUtf8Literal(p_isolate, "end"), end_fn };
+                    (void)once_fn_val.As<v8::Function>()->Call(context, node_stream, 2, end_argv);
+
+                    // Call resume() to trigger data flow if paused
+                    v8::Local<v8::Value> resume_fn_val;
+                    if (node_stream->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "resume")).ToLocal(&resume_fn_val) && resume_fn_val->IsFunction()) {
+                        (void)resume_fn_val.As<v8::Function>()->Call(context, node_stream, 0, nullptr);
+                    }
+                }
+                
+                args.GetReturnValue().Set(resolver->GetPromise());
+                return;
+            }
+            
+            args.GetReturnValue().Set(v8::Promise::Resolver::New(context).ToLocalChecked()->GetPromise());
+        };
+        
+        (void)reader->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "read"), v8::Function::New(context, read_fn).ToLocalChecked());
+        args.GetReturnValue().Set(reader);
+    }
+}
+
+v8::Local<v8::FunctionTemplate> Stream::createWebReadableStreamTemplate(v8::Isolate* p_isolate) {
+    if (!m_web_readable_tmpl.IsEmpty()) {
+        return m_web_readable_tmpl.Get(p_isolate);
+    }
+    v8::Local<v8::FunctionTemplate> tmpl = v8::FunctionTemplate::New(p_isolate, webReadableStreamConstructor);
+    tmpl->SetClassName(v8::String::NewFromUtf8Literal(p_isolate, "ReadableStream"));
+    v8::Local<v8::ObjectTemplate> proto = tmpl->PrototypeTemplate();
+    proto->Set(v8::String::NewFromUtf8Literal(p_isolate, "getReader"), v8::FunctionTemplate::New(p_isolate, webReadableStreamGetReader));
+    m_web_readable_tmpl.Reset(p_isolate, tmpl);
+    return tmpl;
+}
+
+v8::Local<v8::FunctionTemplate> Stream::createWebWritableStreamTemplate(v8::Isolate* p_isolate) {
+    if (!m_web_writable_tmpl.IsEmpty()) {
+        return m_web_writable_tmpl.Get(p_isolate);
+    }
+    v8::Local<v8::FunctionTemplate> tmpl = v8::FunctionTemplate::New(p_isolate, [](const v8::FunctionCallbackInfo<v8::Value>& args) {});
+    tmpl->SetClassName(v8::String::NewFromUtf8Literal(p_isolate, "WritableStream"));
+    m_web_writable_tmpl.Reset(p_isolate, tmpl);
+    return tmpl;
+}
+
 void Stream::readableFromWeb(const v8::FunctionCallbackInfo<v8::Value>& args) {
     v8::Isolate* p_isolate = args.GetIsolate();
-    // In a real implementation, this would wrap a Web ReadableStream
-    // For now, return a basic Readable that throws or is empty
-    p_isolate->ThrowException(v8::Exception::Error(
-        v8::String::NewFromUtf8Literal(p_isolate, "Readable.fromWeb is not yet implemented in Z8")));
+    v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+    
+    if (args.Length() == 0 || !args[0]->IsObject()) {
+        p_isolate->ThrowException(v8::Exception::TypeError(v8::String::NewFromUtf8Literal(p_isolate, "ReadableStream required")));
+        return;
+    }
+    
+    v8::Local<v8::Object> web_stream = args[0].As<v8::Object>();
+    
+    // Create Node Readable using the cached template
+    v8::Local<v8::FunctionTemplate> node_readable_tmpl = getReadableTemplate(p_isolate);
+    v8::Local<v8::Object> node_readable = node_readable_tmpl->GetFunction(context).ToLocalChecked()->NewInstance(context).ToLocalChecked();
+    
+    // Wrap web_stream into node_readable
+    (void)node_readable->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "_webStream"), web_stream);
+    
+    auto read_fn = [](const v8::FunctionCallbackInfo<v8::Value>& args) {
+        v8::Isolate* p_isolate = args.GetIsolate();
+        v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+        v8::Local<v8::Object> self = args.This();
+        
+        v8::Local<v8::Value> web_stream_val;
+        if (!self->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "_webStream")).ToLocal(&web_stream_val) || !web_stream_val->IsObject()) return;
+        v8::Local<v8::Object> web_stream = web_stream_val.As<v8::Object>();
+        
+        v8::Local<v8::Value> reader_val;
+        if (!self->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "_reader")).ToLocal(&reader_val) || !reader_val->IsObject()) {
+            v8::Local<v8::Value> get_reader_fn;
+            if (web_stream->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "getReader")).ToLocal(&get_reader_fn) && get_reader_fn->IsFunction()) {
+                if (get_reader_fn.As<v8::Function>()->Call(context, web_stream, 0, nullptr).ToLocal(&reader_val)) {
+                    (void)self->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "_reader"), reader_val);
+                }
+            }
+        }
+        
+        if (!reader_val.IsEmpty() && reader_val->IsObject()) {
+            v8::Local<v8::Object> reader = reader_val.As<v8::Object>();
+            v8::Local<v8::Value> read_fn_val;
+            if (reader->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "read")).ToLocal(&read_fn_val) && read_fn_val->IsFunction()) {
+                v8::Local<v8::Value> promise_val;
+                if (read_fn_val.As<v8::Function>()->Call(context, reader, 0, nullptr).ToLocal(&promise_val) && promise_val->IsPromise()) {
+                    v8::Local<v8::Promise> promise = promise_val.As<v8::Promise>();
+                    
+                    auto on_fulfilled = [](const v8::FunctionCallbackInfo<v8::Value>& args) {
+                        v8::Isolate* p_isolate = args.GetIsolate();
+                        v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+                        v8::Local<v8::Object> self = args.Data().As<v8::Object>();
+                        v8::Local<v8::Object> result = args[0].As<v8::Object>();
+                        
+                        v8::Local<v8::Value> done_val;
+                        if (result->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "done")).ToLocal(&done_val) && done_val->BooleanValue(p_isolate)) {
+                            v8::Local<v8::Value> push_fn;
+                            if (self->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "push")).ToLocal(&push_fn) && push_fn->IsFunction()) {
+                                v8::Local<v8::Value> push_argv[] = { v8::Null(p_isolate) };
+                                (void)push_fn.As<v8::Function>()->Call(context, self, 1, push_argv);
+                            }
+                        } else {
+                            v8::Local<v8::Value> value;
+                            if (result->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "value")).ToLocal(&value)) {
+                                v8::Local<v8::Value> push_fn;
+                                if (self->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "push")).ToLocal(&push_fn) && push_fn->IsFunction()) {
+                                    v8::Local<v8::Value> push_argv[] = { value };
+                                    (void)push_fn.As<v8::Function>()->Call(context, self, 1, push_argv);
+                                }
+                            }
+                        }
+                    };
+                    
+                    (void)promise->Then(context, v8::Function::New(context, on_fulfilled, self).ToLocalChecked());
+                }
+            }
+        }
+    };
+    
+    (void)node_readable->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "_read"), v8::Function::New(context, read_fn).ToLocalChecked());
+    args.GetReturnValue().Set(node_readable);
 }
 
 void Stream::readableToWeb(const v8::FunctionCallbackInfo<v8::Value>& args) {
     v8::Isolate* p_isolate = args.GetIsolate();
-    p_isolate->ThrowException(v8::Exception::Error(
-        v8::String::NewFromUtf8Literal(p_isolate, "Readable.toWeb is not yet implemented in Z8")));
+    v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+    v8::Local<v8::Object> self = args.This();
+    
+    v8::Local<v8::Object> options = v8::Object::New(p_isolate);
+    (void)options->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "_underlying"), self);
+    
+    v8::Local<v8::Function> web_rs_ctor = createWebReadableStreamTemplate(p_isolate)->GetFunction(context).ToLocalChecked();
+    v8::Local<v8::Value> web_rs_argv[] = { options };
+    v8::Local<v8::Object> web_rs;
+    if (web_rs_ctor->NewInstance(context, 1, web_rs_argv).ToLocal(&web_rs)) {
+        args.GetReturnValue().Set(web_rs);
+    }
 }
 
 void Stream::writableFromWeb(const v8::FunctionCallbackInfo<v8::Value>& args) {
     v8::Isolate* p_isolate = args.GetIsolate();
-    p_isolate->ThrowException(v8::Exception::Error(
-        v8::String::NewFromUtf8Literal(p_isolate, "Writable.fromWeb is not yet implemented in Z8")));
+    p_isolate->ThrowException(v8::Exception::Error(v8::String::NewFromUtf8Literal(p_isolate, "Writable.fromWeb not yet implemented")));
 }
 
 void Stream::writableToWeb(const v8::FunctionCallbackInfo<v8::Value>& args) {
     v8::Isolate* p_isolate = args.GetIsolate();
-    p_isolate->ThrowException(v8::Exception::Error(
-        v8::String::NewFromUtf8Literal(p_isolate, "Writable.toWeb is not yet implemented in Z8")));
+    p_isolate->ThrowException(v8::Exception::Error(v8::String::NewFromUtf8Literal(p_isolate, "Writable.toWeb not yet implemented")));
 }
 
 void Stream::duplexFromWeb(const v8::FunctionCallbackInfo<v8::Value>& args) {
     v8::Isolate* p_isolate = args.GetIsolate();
-    p_isolate->ThrowException(v8::Exception::Error(
-        v8::String::NewFromUtf8Literal(p_isolate, "Duplex.fromWeb is not yet implemented in Z8")));
+    p_isolate->ThrowException(v8::Exception::Error(v8::String::NewFromUtf8Literal(p_isolate, "Duplex.fromWeb not yet implemented")));
 }
 
 void Stream::duplexToWeb(const v8::FunctionCallbackInfo<v8::Value>& args) {
     v8::Isolate* p_isolate = args.GetIsolate();
-    p_isolate->ThrowException(v8::Exception::Error(
-        v8::String::NewFromUtf8Literal(p_isolate, "Duplex.toWeb is not yet implemented in Z8")));
+    p_isolate->ThrowException(v8::Exception::Error(v8::String::NewFromUtf8Literal(p_isolate, "Duplex.toWeb not yet implemented")));
 }
 
 } // namespace module

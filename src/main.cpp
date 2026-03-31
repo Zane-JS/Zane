@@ -119,6 +119,15 @@ class Runtime {
         // Initialize Buffer module (global object)
         z8::module::Buffer::initialize(p_isolate, context);
 
+        // Initialize Web Streams (global objects)
+        v8::Local<v8::Function> readable_stream_ctor = 
+            z8::module::Stream::createWebReadableStreamTemplate(p_isolate)->GetFunction(context).ToLocalChecked();
+        (void)global->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "ReadableStream"), readable_stream_ctor);
+
+        v8::Local<v8::Function> writable_stream_ctor = 
+            z8::module::Stream::createWebWritableStreamTemplate(p_isolate)->GetFunction(context).ToLocalChecked();
+        (void)global->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "WritableStream"), writable_stream_ctor);
+
         p_isolate->SetHostImportModuleDynamicallyCallback(HostImportModuleDynamicallyCallback);
     }
 

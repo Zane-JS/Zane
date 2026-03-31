@@ -41,6 +41,8 @@ class Stream {
     static v8::Persistent<v8::FunctionTemplate> m_duplex_tmpl;
     static v8::Persistent<v8::FunctionTemplate> m_transform_tmpl;
     static v8::Persistent<v8::FunctionTemplate> m_passthrough_tmpl;
+    static v8::Persistent<v8::FunctionTemplate> m_web_readable_tmpl;
+    static v8::Persistent<v8::FunctionTemplate> m_web_writable_tmpl;
 
   public:
     static v8::Local<v8::ObjectTemplate> createTemplate(v8::Isolate* p_isolate);
@@ -173,6 +175,10 @@ class Stream {
 
     // Transform destroy
     static void transformDestroy(const v8::FunctionCallbackInfo<v8::Value>& args);
+    
+    // Web Stream Templates (for global exposure)
+    static v8::Local<v8::FunctionTemplate> createWebReadableStreamTemplate(v8::Isolate* p_isolate);
+    static v8::Local<v8::FunctionTemplate> createWebWritableStreamTemplate(v8::Isolate* p_isolate);
 
     // Promises API
     static void pipelinePromise(const v8::FunctionCallbackInfo<v8::Value>& args);

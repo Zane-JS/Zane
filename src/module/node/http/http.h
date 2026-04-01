@@ -13,6 +13,9 @@
 #pragma comment(lib, "ws2_32.lib")
 #endif
 
+// Include llhttp
+#include "llhttp.h"
+
 namespace z8 {
 namespace module {
 
@@ -48,16 +51,31 @@ private:
 #endif
 };
 
-// HTTP Request
+// HTTP Request with llhttp parser
 class HTTPRequest {
 public:
     HTTPRequest(v8::Isolate* p_isolate);
+    ~HTTPRequest();
     v8::Local<v8::Object> toObject();
     
     void setMethod(const std::string& method) { m_method = method; }
     void setUrl(const std::string& url) { m_url = url; }
     void addHeader(const std::string& name, const std::string& value);
     void setBody(const std::string& body) { m_body = body; }
+    void appendBody(const char* data, size_t length);
+    
+    // Getters for debugging
+    const std::string& getMethod() const { return m_method; }
+    const std::string& getUrl() const { return m_url; }
+    
+    // llhttp parser
+    llhttp_errno_t parse(const char* data, size_t length);
+    llhttp_t* getParser() { return &m_parser; }
+    
+    // Temporary storage for parsing
+    std::string m_current_header_field;
+    std::string m_current_header_value;
+    bool m_parsing_complete;
     
 private:
     v8::Isolate* p_isolate;
@@ -65,6 +83,10 @@ private:
     std::string m_url;
     std::map<std::string, std::string> m_headers;
     std::string m_body;
+    
+    // llhttp parser and settings
+    llhttp_t m_parser;
+    llhttp_settings_t m_settings;
 };
 
 // HTTP Response

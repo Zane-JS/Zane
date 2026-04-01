@@ -2,9 +2,62 @@
 #include <sstream>
 #include <thread>
 #include <iostream>
+#include <cstring>
 
 namespace z8 {
 namespace module {
+
+// llhttp callbacks
+static int on_url(llhttp_t* parser, const char* at, size_t length) {
+    HTTPRequest* p_request = static_cast<HTTPRequest*>(parser->data);
+    p_request->setUrl(std::string(at, length));
+    return 0;
+}
+
+static int on_header_field(llhttp_t* parser, const char* at, size_t length) {
+    HTTPRequest* p_request = static_cast<HTTPRequest*>(parser->data);
+    // Save previous header if exists
+    if (!p_request->m_current_header_field.empty() && !p_request->m_current_header_value.empty()) {
+        p_request->addHeader(p_request->m_current_header_field, p_request->m_current_header_value);
+        p_request->m_current_header_value.clear();
+    }
+    p_request->m_current_header_field = std::string(at, length);
+    return 0;
+}
+
+static int on_header_value(llhttp_t* parser, const char* at, size_t length) {
+    HTTPRequest* p_request = static_cast<HTTPRequest*>(parser->data);
+    p_request->m_current_header_value = std::string(at, length);
+    return 0;
+}
+
+static int on_headers_complete(llhttp_t* parser) {
+    HTTPRequest* p_request = static_cast<HTTPRequest*>(parser->data);
+    // Save last header
+    if (!p_request->m_current_header_field.empty() && !p_request->m_current_header_value.empty()) {
+        p_request->addHeader(p_request->m_current_header_field, p_request->m_current_header_value);
+        p_request->m_current_header_field.clear();
+        p_request->m_current_header_value.clear();
+    }
+    
+    // Set method from parser
+    const char* p_method_name = llhttp_method_name(static_cast<llhttp_method_t>(llhttp_get_method(parser)));
+    p_request->setMethod(p_method_name);
+    
+    return 0;
+}
+
+static int on_body(llhttp_t* parser, const char* at, size_t length) {
+    HTTPRequest* p_request = static_cast<HTTPRequest*>(parser->data);
+    p_request->appendBody(at, length);
+    return 0;
+}
+
+static int on_message_complete(llhttp_t* parser) {
+    HTTPRequest* p_request = static_cast<HTTPRequest*>(parser->data);
+    p_request->m_parsing_complete = true;
+    return 0;
+}
 
 // HTTPServer implementation
 HTTPServer::HTTPServer(v8::Isolate* p_isolate)
@@ -91,43 +144,35 @@ void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Fun
             
             // Handle request in separate thread
             std::thread([this, client_socket]() {
-                char buffer[4096];
+                char buffer[8192];
                 int32_t bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
+                
+                std::cout << "[Thread] Received " << bytes_received << " bytes" << std::endl;
                 
                 if (bytes_received > 0) {
                     buffer[bytes_received] = '\0';
                     
-                    // Parse HTTP request (simple parser)
-                    std::string request_str(buffer, bytes_received);
-                    std::istringstream stream(request_str);
-                    std::string line;
+                    std::cout << "[Thread] Creating HTTPRequest..." << std::endl;
+                    // Create request and parse with llhttp
+                    HTTPRequest* p_request = new HTTPRequest(p_isolate);
                     
-                    // Parse request line
-                    std::getline(stream, line);
-                    std::istringstream request_line(line);
-                    std::string method, url, version;
-                    request_line >> method >> url >> version;
+                    std::cout << "[Thread] Parsing with llhttp..." << std::endl;
+                    // Parse HTTP request using llhttp
+                    llhttp_errno_t err = p_request->parse(buffer, bytes_received);
                     
-                    // Create request and response objects
-                    HTTPRequest* request = new HTTPRequest(p_isolate);
-                    request->setMethod(method);
-                    request->setUrl(url);
-                    
-                    // Parse headers
-                    while (std::getline(stream, line) && line != "\r") {
-                        size_t colon = line.find(':');
-                        if (colon != std::string::npos) {
-                            std::string name = line.substr(0, colon);
-                            std::string value = line.substr(colon + 1);
-                            // Trim
-                            value.erase(0, value.find_first_not_of(" \t\r\n"));
-                            value.erase(value.find_last_not_of(" \t\r\n") + 1);
-                            request->addHeader(name, value);
-                        }
+                    if (err != HPE_OK) {
+                        std::cerr << "[Thread] HTTP parse error: " << llhttp_errno_name(err) << std::endl;
+                        delete p_request;
+                        closesocket(client_socket);
+                        return;
                     }
                     
-                    HTTPResponse* response = new HTTPResponse(p_isolate, client_socket);
+                    std::cout << "[Thread] Parsed request: " << p_request->getMethod() << " " << p_request->getUrl() << std::endl;
                     
+                    std::cout << "[Thread] Creating HTTPResponse..." << std::endl;
+                    HTTPResponse* p_response = new HTTPResponse(p_isolate, client_socket);
+                    
+                    std::cout << "[Thread] Calling request handler..." << std::endl;
                     // Call request handler
                     if (!m_request_handler.IsEmpty()) {
                         v8::Locker locker(p_isolate);
@@ -136,27 +181,40 @@ void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Fun
                         v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
                         v8::Context::Scope context_scope(context);
                         
+                        std::cout << "[Thread] Getting handler function..." << std::endl;
                         v8::Local<v8::Function> handler = m_request_handler.Get(p_isolate);
-                        v8::Local<v8::Value> argv[2] = {
-                            request->toObject(),
-                            response->toObject()
-                        };
                         
+                        std::cout << "[Thread] Creating request object..." << std::endl;
+                        v8::Local<v8::Value> req_obj = p_request->toObject();
+                        
+                        std::cout << "[Thread] Creating response object..." << std::endl;
+                        v8::Local<v8::Value> res_obj = p_response->toObject();
+                        
+                        v8::Local<v8::Value> argv[2] = { req_obj, res_obj };
+                        
+                        std::cout << "[Thread] Calling JavaScript handler..." << std::endl;
                         v8::TryCatch try_catch(p_isolate);
                         handler->Call(context, context->Global(), 2, argv);
                         
                         if (try_catch.HasCaught()) {
+                            std::cerr << "[Thread] JavaScript error in handler" << std::endl;
                             // Send 500 error
-                            response->writeHead(500, v8::Local<v8::Object>());
-                            response->end("Internal Server Error");
+                            p_response->writeHead(500, v8::Local<v8::Object>());
+                            p_response->end("Internal Server Error");
                         }
+                        
+                        std::cout << "[Thread] Handler completed" << std::endl;
                     }
                     
-                    delete request;
-                    delete response;
+                    std::cout << "[Thread] Cleaning up..." << std::endl;
+                    
+                    delete p_request;
+                    delete p_response;
                 }
                 
+                std::cout << "[Thread] Closing socket..." << std::endl;
                 closesocket(client_socket);
+                std::cout << "[Thread] Socket closed" << std::endl;
             }).detach();
         }
     }).detach();
@@ -189,7 +247,33 @@ void HTTPServer::setRequestHandler(v8::Local<v8::Function> handler) {
 }
 
 // HTTPRequest implementation
-HTTPRequest::HTTPRequest(v8::Isolate* p_isolate) : p_isolate(p_isolate) {}
+HTTPRequest::HTTPRequest(v8::Isolate* p_isolate) 
+    : p_isolate(p_isolate), m_parsing_complete(false) {
+    // Initialize llhttp settings
+    llhttp_settings_init(&m_settings);
+    m_settings.on_url = on_url;
+    m_settings.on_header_field = on_header_field;
+    m_settings.on_header_value = on_header_value;
+    m_settings.on_headers_complete = on_headers_complete;
+    m_settings.on_body = on_body;
+    m_settings.on_message_complete = on_message_complete;
+    
+    // Initialize parser
+    llhttp_init(&m_parser, HTTP_REQUEST, &m_settings);
+    m_parser.data = this;
+}
+
+HTTPRequest::~HTTPRequest() {
+    // llhttp doesn't require explicit cleanup for stack-allocated parser
+}
+
+llhttp_errno_t HTTPRequest::parse(const char* data, size_t length) {
+    return llhttp_execute(&m_parser, data, length);
+}
+
+void HTTPRequest::appendBody(const char* data, size_t length) {
+    m_body.append(data, length);
+}
 
 v8::Local<v8::Object> HTTPRequest::toObject() {
     v8::EscapableHandleScope handle_scope(p_isolate);
@@ -284,10 +368,12 @@ void HTTPResponse::end(const std::string& data) {
     if (!m_headers_sent) sendHeaders();
     
     if (!data.empty()) {
-        send(m_socket, data.c_str(), (int32_t)data.length(), 0);
+        int32_t sent = send(m_socket, data.c_str(), (int32_t)data.length(), 0);
+        std::cout << "Sent " << sent << " bytes of body data" << std::endl;
     }
     
     m_finished = true;
+    std::cout << "Response finished" << std::endl;
 }
 
 void HTTPResponse::sendHeaders() {
@@ -314,7 +400,8 @@ void HTTPResponse::sendHeaders() {
     ss << "\r\n";
     
     std::string headers_str = ss.str();
-    send(m_socket, headers_str.c_str(), (int32_t)headers_str.length(), 0);
+    int32_t sent = send(m_socket, headers_str.c_str(), (int32_t)headers_str.length(), 0);
+    std::cout << "Sent " << sent << " bytes of headers" << std::endl;
     
     m_headers_sent = true;
 }

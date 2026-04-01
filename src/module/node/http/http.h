@@ -47,6 +47,7 @@ class HTTPServer {
 
     bool m_listening;
     int m_port;
+    std::string m_host; // Store host string
 };
 
 // HTTP Request class

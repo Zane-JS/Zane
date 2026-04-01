@@ -116,16 +116,30 @@ void HTTPServer::listen(int port, const char* host, v8::Local<v8::Function> call
         return;
 
     m_port = port;
+    m_host = host; // Store host string
     m_listen_callback.Reset(p_isolate, callback);
 
     // Create loop if not exists
     if (!p_loop) {
+        printf("Creating uSockets loop...\n");
         p_loop = us_create_loop(nullptr, nullptr, nullptr, nullptr, 0);
+        if (!p_loop) {
+            printf("ERROR: Failed to create uSockets loop!\n");
+            return;
+        }
+        printf("uSockets loop created successfully\n");
     }
 
     // Create socket context
+    printf("Creating socket context...\n");
     us_socket_context_options_t options = {};
     p_context = us_create_socket_context(0, p_loop, sizeof(HTTPServer*), options);
+    
+    if (!p_context) {
+        printf("ERROR: Failed to create socket context!\n");
+        return;
+    }
+    printf("Socket context created\n");
 
     // Store server pointer in context extension
     *((HTTPServer**)us_socket_context_ext(0, p_context)) = this;
@@ -136,23 +150,67 @@ void HTTPServer::listen(int port, const char* host, v8::Local<v8::Function> call
     us_socket_context_on_close(0, p_context, on_http_close);
 
     // Listen
-    p_listen_socket = us_socket_context_listen(0, p_context, host, port, 0, 0);
+    printf("Attempting to listen on %s:%d...\n", m_host.c_str(), port);
+    p_listen_socket = us_socket_context_listen(0, p_context, m_host.c_str(), port, 0, 0);
 
     if (p_listen_socket) {
+        printf("Listen socket created successfully!\n");
         m_listening = true;
 
-        // Call listen callback immediately (synchronous in our implementation)
+        // Call listen callback immediately
         if (!m_listen_callback.IsEmpty()) {
             v8::HandleScope handle_scope(p_isolate);
             v8::Local<v8::Function> cb = m_listen_callback.Get(p_isolate);
             v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
-            cb->Call(context, context->Global(), 0, nullptr).ToLocalChecked();
+            
+            v8::TryCatch try_catch(p_isolate);
+            v8::MaybeLocal<v8::Value> result = cb->Call(context, context->Global(), 0, nullptr);
+            
+            if (try_catch.HasCaught()) {
+                // Print error
+                v8::String::Utf8Value error(p_isolate, try_catch.Exception());
+                printf("Error calling listen callback: %s\n", *error);
+            } else if (!result.IsEmpty()) {
+                printf("Listen callback called successfully\n");
+            }
+        } else {
+            printf("No listen callback provided\n");
         }
 
-        // Start a background thread to run the uSockets loop
+        // Start uSockets loop in background thread
+        printf("Starting uSockets IOCP loop in background thread...\n");
         std::thread([this]() {
+            printf("IOCP loop thread started\n");
             us_loop_run(p_loop);
+            printf("IOCP loop thread ended\n");
         }).detach();
+
+        // Create a keep-alive timer to prevent Z8 event loop from exiting
+        v8::HandleScope handle_scope(p_isolate);
+        v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+        
+        v8::Local<v8::Object> global = context->Global();
+        v8::Local<v8::Value> set_interval_val = global->Get(context, 
+            v8::String::NewFromUtf8(p_isolate, "setInterval").ToLocalChecked()).ToLocalChecked();
+        
+        if (set_interval_val->IsFunction()) {
+            v8::Local<v8::Function> set_interval = set_interval_val.As<v8::Function>();
+            
+            v8::Local<v8::Function> dummy = v8::Function::New(context, 
+                [](const v8::FunctionCallbackInfo<v8::Value>& args) {
+                    // Keep loop alive
+                }).ToLocalChecked();
+            
+            v8::Local<v8::Value> argv[2] = {
+                dummy,
+                v8::Number::New(p_isolate, 1000)
+            };
+            
+            set_interval->Call(context, global, 2, argv).ToLocalChecked();
+            printf("Keep-alive timer created\n");
+        }
+    } else {
+        printf("Failed to create listen socket\n");
     }
 }
 
@@ -413,7 +471,7 @@ void HTTP::serverListen(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
     // Parse arguments: port, [host], [callback]
     int32_t port = 3000;
-    const char* p_host = "0.0.0.0";
+    std::string host_str = "0.0.0.0";
     v8::Local<v8::Function> callback;
 
     if (args.Length() > 0 && args[0]->IsNumber()) {
@@ -421,15 +479,15 @@ void HTTP::serverListen(const v8::FunctionCallbackInfo<v8::Value>& args) {
     }
 
     if (args.Length() > 1 && args[1]->IsString()) {
-        v8::String::Utf8Value host_str(p_isolate, args[1]);
-        p_host = *host_str;
+        v8::String::Utf8Value host_val(p_isolate, args[1]);
+        host_str = std::string(*host_val, host_val.length());
     }
 
     if (args.Length() > 0 && args[args.Length() - 1]->IsFunction()) {
         callback = args[args.Length() - 1].As<v8::Function>();
     }
 
-    p_server->listen(port, p_host, callback);
+    p_server->listen(port, host_str.c_str(), callback);
 
     args.GetReturnValue().Set(args.This());
 }

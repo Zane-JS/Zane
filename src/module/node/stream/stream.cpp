@@ -226,16 +226,27 @@ void Stream::readableRead(const v8::FunctionCallbackInfo<v8::Value>& args) {
     v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
     v8::Local<v8::Object> self = args.This();
 
+    v8::Local<v8::External> ext = self->GetInternalField(0).As<v8::External>();
+    StreamInternal* p_internal = static_cast<StreamInternal*>(ext->Value());
+
+    // Respect state (ignore if already reading or ended)
+    if (p_internal->m_reading || p_internal->m_ended || p_internal->m_destroyed) {
+        args.GetReturnValue().Set(v8::Undefined(p_isolate));
+        return;
+    }
+
     v8::Local<v8::Value> read_fn_val;
     if (self->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "_read")).ToLocal(&read_fn_val) && read_fn_val->IsFunction()) {
+        p_internal->m_reading = true; // Mark as reading to prevent recursive calls
         v8::Local<v8::Function> read_fn = read_fn_val.As<v8::Function>();
         v8::Local<v8::Value> argv[1];
-        int argc = 0;
+        int32_t argc = 0;
         if (args.Length() > 0 && !args[0]->IsUndefined()) {
             argv[0] = args[0];
             argc = 1;
         }
         (void)read_fn->Call(context, self, argc, argv);
+        p_internal->m_reading = false; // Done reading
     }
     args.GetReturnValue().Set(v8::Undefined(p_isolate));
 }
@@ -263,25 +274,12 @@ void Stream::readablePush(const v8::FunctionCallbackInfo<v8::Value>& args) {
         (void)emit_val.As<v8::Function>()->Call(context, self, 2, argv);
     }
 
-    // If not paused, schedule another read to ensure continuous data flow
+    // Flow data if not paused
     v8::Local<v8::External> ext = self->GetInternalField(0).As<v8::External>();
     StreamInternal* p_internal = static_cast<StreamInternal*>(ext->Value());
     if (!p_internal->m_paused) {
-        z8::Task* p_task = new z8::Task();
-        p_task->p_data = new v8::Global<v8::Object>(p_isolate, self); // Pass the stream object
-        p_task->m_runner = [](v8::Isolate* p_current_isolate, v8::Local<v8::Context> current_context, z8::Task* p_current_task) {
-            v8::HandleScope handle_scope(p_current_isolate);
-            v8::Context::Scope context_scope(current_context);
-            v8::Local<v8::Object> stream_obj = static_cast<v8::Global<v8::Object>*>(p_current_task->p_data)->Get(p_current_isolate);
-            
-            v8::Local<v8::Value> read_fn_val;
-            if (stream_obj->Get(current_context, v8::String::NewFromUtf8Literal(p_current_isolate, "read")).ToLocal(&read_fn_val) && read_fn_val->IsFunction()) {
-                (void)read_fn_val.As<v8::Function>()->Call(current_context, stream_obj, 0, nullptr);
-            }
-            delete static_cast<v8::Global<v8::Object>*>(p_current_task->p_data); // Clean up the global handle
-        };
-        p_task->m_is_promise = false;
-        z8::TaskQueue::getInstance().enqueue(p_task);
+        // No longer enqueuing an automatic read() task here to avoid infinite loops.
+        // The flow is driven by events and explicit read() calls.
     }
 
     args.GetReturnValue().Set(true);
@@ -2018,18 +2016,18 @@ void Stream::readableMap(const v8::FunctionCallbackInfo<v8::Value>& args) {
         // error handler: forward error to result_stream
         v8::Local<v8::Function> error_handler = v8::Function::New(context,
             [](const v8::FunctionCallbackInfo<v8::Value>& cb) {
-                v8::Isolate* iso = cb.GetIsolate();
-                v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+                v8::Isolate* p_isolate = cb.GetIsolate();
+                v8::Local<v8::Context> ctx = p_isolate->GetCurrentContext();
                 v8::Local<v8::Object> state = cb.Data().As<v8::Object>();
                 
                 v8::Local<v8::Value> done_val;
-                if (state->Get(ctx, v8::String::NewFromUtf8Literal(iso, "done")).ToLocal(&done_val) && done_val->BooleanValue(iso)) return;
-                (void)state->Set(ctx, v8::String::NewFromUtf8Literal(iso, "done"), v8::Boolean::New(iso, true));
+                if (state->Get(ctx, v8::String::NewFromUtf8Literal(p_isolate, "done")).ToLocal(&done_val) && done_val->BooleanValue(p_isolate)) return;
+                (void)state->Set(ctx, v8::String::NewFromUtf8Literal(p_isolate, "done"), v8::Boolean::New(p_isolate, true));
                 
-                v8::Local<v8::Object> res = state->Get(ctx, v8::String::NewFromUtf8Literal(iso, "result_stream")).ToLocalChecked().As<v8::Object>();
+                v8::Local<v8::Object> res = state->Get(ctx, v8::String::NewFromUtf8Literal(p_isolate, "result_stream")).ToLocalChecked().As<v8::Object>();
                 v8::Local<v8::Value> destroy_fn_val;
-                if (res->Get(ctx, v8::String::NewFromUtf8Literal(iso, "destroy")).ToLocal(&destroy_fn_val) && destroy_fn_val->IsFunction()) {
-                    v8::Local<v8::Value> err = cb.Length() > 0 ? cb[0] : v8::Exception::Error(v8::String::NewFromUtf8Literal(iso, "Stream error in map"));
+                if (res->Get(ctx, v8::String::NewFromUtf8Literal(p_isolate, "destroy")).ToLocal(&destroy_fn_val) && destroy_fn_val->IsFunction()) {
+                    v8::Local<v8::Value> err = cb.Length() > 0 ? cb[0] : v8::Exception::Error(v8::String::NewFromUtf8Literal(p_isolate, "Stream error in map"));
                     v8::Local<v8::Value> destroy_argv[] = { err };
                     (void)destroy_fn_val.As<v8::Function>()->Call(ctx, res, 1, destroy_argv);
                 }

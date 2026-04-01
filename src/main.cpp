@@ -618,7 +618,6 @@ class Runtime {
                     p_task->m_runner(p_isolate, context, p_task);
                     delete p_task;
 
-                    // Resume JS execution
                     p_isolate->PerformMicrotaskCheckpoint();
 
                     if (task_try_catch.HasCaught()) {
@@ -645,23 +644,23 @@ class Runtime {
                             z8::ThreadPool::getInstance().hasPendingTasks();
 
             if (!has_work) {
-                // One last check for microtasks that might have been queued
                 p_isolate->PerformMicrotaskCheckpoint();
 
-                // Re-check after microtask checkpoint
-                has_work = z8::module::Timer::hasActiveTimers() ||
-                           !z8::TaskQueue::getInstance().isEmpty() ||
-                           z8::ThreadPool::getInstance().hasPendingTasks();
+                bool timers = z8::module::Timer::hasActiveTimers();
+                bool tasks = !z8::TaskQueue::getInstance().isEmpty();
+                bool threads = z8::ThreadPool::getInstance().hasPendingTasks();
+                
+                has_work = timers || tasks || threads;
                 
                 if (!has_work) {
                     keep_running = false;
                 }
             }
 
-            // 4. Wait for work if nothing is pending
-            if (keep_running && !has_work) { // Only wait if there's truly nothing to do
+            // 4. Wait for work if nothing is pending right now
+            if (keep_running && z8::TaskQueue::getInstance().isEmpty()) { 
                 std::chrono::milliseconds delay = z8::module::Timer::getNextDelay();
-                std::chrono::milliseconds timeout(10); // Always wait for a small duration
+                std::chrono::milliseconds timeout(10); 
                 if (delay.count() >= 0) {
                     timeout = std::chrono::milliseconds(std::min(static_cast<int64_t>(delay.count()), 10LL));
                 }

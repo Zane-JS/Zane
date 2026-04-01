@@ -482,6 +482,39 @@ class Runtime {
             return module;
         }
 
+        if (specifier_str == "node:stream/promises") {
+            v8::Local<v8::ObjectTemplate> stream_template = z8::module::Stream::createTemplate(p_isolate);
+            v8::Local<v8::Object> stream_instance = stream_template->NewInstance(context).ToLocalChecked();
+            v8::Local<v8::Object> promises_obj = stream_instance->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "promises")).ToLocalChecked().As<v8::Object>();
+            v8::Local<v8::Array> prop_names = promises_obj->GetPropertyNames(context).ToLocalChecked();
+
+            std::vector<v8::Local<v8::String>> export_names;
+            export_names.push_back(v8::String::NewFromUtf8Literal(p_isolate, "default"));
+            for (uint32_t i = 0; i < prop_names->Length(); ++i) {
+                export_names.push_back(prop_names->Get(context, i).ToLocalChecked().As<v8::String>());
+            }
+
+            auto module = v8::Module::CreateSyntheticModule(
+                p_isolate,
+                v8::String::NewFromUtf8Literal(p_isolate, "node:stream/promises"),
+                v8::MemorySpan<const v8::Local<v8::String>>(export_names.data(), export_names.size()),
+                [](v8::Local<v8::Context> context, v8::Local<v8::Module> module) -> v8::MaybeLocal<v8::Value> {
+                    v8::Isolate* p_isolate = v8::Isolate::GetCurrent();
+                    v8::Local<v8::ObjectTemplate> stream_template = z8::module::Stream::createTemplate(p_isolate);
+                    v8::Local<v8::Object> stream_obj = stream_template->NewInstance(context).ToLocalChecked();
+                    v8::Local<v8::Object> promises_obj = stream_obj->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "promises")).ToLocalChecked().As<v8::Object>();
+                    
+                    module->SetSyntheticModuleExport(p_isolate, v8::String::NewFromUtf8Literal(p_isolate, "default"), promises_obj).Check();
+                    v8::Local<v8::Array> prop_names = promises_obj->GetPropertyNames(context).ToLocalChecked();
+                    for (uint32_t i = 0; i < prop_names->Length(); ++i) {
+                        v8::Local<v8::String> name = prop_names->Get(context, i).ToLocalChecked().As<v8::String>();
+                        module->SetSyntheticModuleExport(p_isolate, name, promises_obj->Get(context, name).ToLocalChecked()).Check();
+                    }
+                    return v8::Undefined(p_isolate);
+                });
+            return module;
+        }
+
         p_isolate->ThrowException(
             v8::String::NewFromUtf8(p_isolate, ("Module not found: " + specifier_str).c_str()).ToLocalChecked());
         return v8::MaybeLocal<v8::Module>();

@@ -179,6 +179,12 @@ class Stream {
     // Web Stream Templates (for global exposure)
     static v8::Local<v8::FunctionTemplate> createWebReadableStreamTemplate(v8::Isolate* p_isolate);
     static v8::Local<v8::FunctionTemplate> createWebWritableStreamTemplate(v8::Isolate* p_isolate);
+    
+    // Web Stream Constructors/Methods
+    static void webReadableStreamConstructor(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void webReadableStreamGetReader(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void webWritableStreamConstructor(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void webWritableStreamGetWriter(const v8::FunctionCallbackInfo<v8::Value>& args);
 
     // Promises API
     static void pipelinePromise(const v8::FunctionCallbackInfo<v8::Value>& args);

@@ -22,14 +22,9 @@ DEPENDENCIES = {
         "folder": "zlib",
         "is_source": True
     },
-    "uWebSockets": {
-        "url": "https://github.com/uNetworking/uWebSockets/archive/refs/tags/v20.74.0.zip",
-        "folder": "uWebSockets",
-        "is_source": True
-    },
-    "uSockets": {
-        "url": "https://github.com/uNetworking/uSockets/archive/refs/tags/v0.8.8.zip",
-        "folder": "uSockets",
+    "drogon": {
+        "url": "https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.12.zip",
+        "folder": "drogon",
         "is_source": True
     },
     "brotli": {

@@ -2,6 +2,7 @@
 #define Z8_MODULE_HTTP_H
 
 #include "v8.h"
+<<<<<<< Updated upstream
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -12,10 +13,13 @@ struct us_loop_t;
 struct us_socket_context_t;
 struct us_listen_socket_t;
 struct us_socket_t;
+=======
+>>>>>>> Stashed changes
 
 namespace z8 {
 namespace module {
 
+<<<<<<< Updated upstream
 class HTTPServer;
 class HTTPRequest;
 class HTTPResponse;
@@ -126,6 +130,22 @@ class HTTP {
     static HTTPServer* unwrapServer(v8::Local<v8::Object> obj);
     static HTTPResponse* unwrapResponse(v8::Local<v8::Object> obj);
     static HTTPRequest* unwrapRequest(v8::Local<v8::Object> obj);
+=======
+class HTTP {
+  public:
+    static v8::Local<v8::ObjectTemplate> createTemplate(v8::Isolate* p_isolate);
+    
+    // Server methods
+    static void createServer(const v8::FunctionCallbackInfo<v8::Value>& args);
+    
+    // Client methods
+    static void request(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void get(const v8::FunctionCallbackInfo<v8::Value>& args);
+    
+    // Constants
+    static void getMethods(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
+    static void getStatusCodes(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
+>>>>>>> Stashed changes
 };
 
 } // namespace module

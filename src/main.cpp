@@ -515,7 +515,10 @@ class Runtime {
             return module;
         }
 
+<<<<<<< Updated upstream
         // node:http module
+=======
+>>>>>>> Stashed changes
         if (specifier_str == "node:http") {
             v8::Local<v8::ObjectTemplate> http_template = z8::module::HTTP::createTemplate(p_isolate);
             v8::Local<v8::Object> http_instance = http_template->NewInstance(context).ToLocalChecked();

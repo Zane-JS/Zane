@@ -103,19 +103,8 @@ $cppFlags = @(
     "/O2", "/Oi", "/Ot", "/MT", "/DNDEBUG",
     "/DV8_COMPRESS_POINTERS",
     "/nologo", "/c",
-    "/Iv8/include", "/Isrc", "/Ideps/zlib", "/Ideps/brotli/c/include", "/Ideps/zstd/lib",
-    "/Ideps/uSockets/src"
+    "/Iv8/include", "/Isrc", "/Ideps/zlib", "/Ideps/brotli/c/include", "/Ideps/zstd/lib", "/Ideps/llhttp/include"
 )
-
-# Enable native IOCP for Windows (Z8's competitive advantage)
-if ($UseIOCP) {
-    Write-Host "Using native Windows IOCP backend (high performance, zero libuv dependency)"
-    $cppFlags += "/DLIBUS_USE_IOCP"
-    $cppFlags += "/DLIBUS_NO_SSL"  # Disable SSL for now
-} else {
-    Write-Host "Using libuv backend (fallback mode)"
-    $cppFlags += "/DLIBUS_USE_LIBUV"
-}
 
 $linkFlags = @(
     "/OUT:z8.exe", "/SUBSYSTEM:CONSOLE", "/MACHINE:X64", "/NOLOGO",
@@ -211,7 +200,25 @@ if (Needs-Rebuild -Sources @("deps/zstd/lib") -Target $zstdLib) {
 }
 $linkFlags += $zstdLib
 
-# 3.5: Z8 Core
+# 3.5: llhttp (HTTP Parser from Node.js)
+$llhttpSources = @(
+    "deps/llhttp/src/api.c",
+    "deps/llhttp/src/http.c",
+    "deps/llhttp/src/llhttp.c"
+)
+$llhttpLib = "build\lib\llhttp.lib"
+if (Needs-Rebuild -Sources @("deps/llhttp/src") -Target $llhttpLib) {
+    Write-Host "Rebuilding llhttp..."
+    & cl.exe $cppFlags /Ideps/llhttp/include /Fo"build\obj\" $llhttpSources
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+    
+    $objs = $llhttpSources | ForEach-Object { "build\obj\" + [System.IO.Path]::GetFileNameWithoutExtension($_) + ".obj" }
+    & lib.exe /NOLOGO /OUT:$llhttpLib $objs
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+}
+$linkFlags += $llhttpLib
+
+# 3.6: Z8 Core
 $coreSources = @(
     "src/main.cpp", "src/temporal_shims.cpp", "src/module/console.cpp", "src/module/node/fs/fs.cpp", 
     "src/module/node/path/path.cpp", "src/module/node/os/os.cpp", "src/module/node/process/process.cpp", 

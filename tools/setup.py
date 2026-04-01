@@ -22,6 +22,11 @@ DEPENDENCIES = {
         "folder": "zlib",
         "is_source": True
     },
+    "llhttp": {
+        "url": "https://github.com/nodejs/llhttp/archive/refs/tags/release/v9.2.1.zip",
+        "folder": "llhttp",
+        "is_source": True
+    },
     "drogon": {
         "url": "https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.12.zip",
         "folder": "drogon",

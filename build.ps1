@@ -122,7 +122,8 @@ $linkFlags = @(
     "V8\out.gn\x64.release\obj\v8_monolith.lib",
     "libcmt.lib", "libcpmt.lib",
     "winmm.lib", "dbghelp.lib", "shlwapi.lib", "user32.lib", "iphlpapi.lib",
-    "advapi32.lib", "shell32.lib", "ole32.lib", "uuid.lib", "rpcrt4.lib", "ntdll.lib", "userenv.lib"
+    "advapi32.lib", "shell32.lib", "ole32.lib", "uuid.lib", "rpcrt4.lib", "ntdll.lib", "userenv.lib",
+    "ws2_32.lib"
 )
 
 if ($Config -eq "Release") {
@@ -207,63 +208,10 @@ if (Needs-Rebuild -Sources @("deps/zstd/lib") -Target $zstdLib) {
     & cl.exe $cppFlags /Fo"build\obj\" $zstdSources
     if ($LASTEXITCODE -ne 0) { exit 1 }
     & cl.exe $cppFlags /Fobuild\obj\zstd_preSplit.obj deps/zstd/lib/compress/zstd_preSplit.c
-    
-    $objs = $zstdSources | ForEach-Object { "build\obj\" + [System.IO.Path]::GetFileNameWithoutExtension($_) + ".obj" }
-    $objs += "build\obj\zstd_preSplit.obj"
-    & lib.exe /NOLOGO /OUT:$zstdLib $objs
-    if ($LASTEXITCODE -ne 0) { exit 1 }
 }
 $linkFlags += $zstdLib
 
-# 3.5: uSockets (with IOCP support)
-$uSocketsSources = @(
-    "deps/uSockets/src/bsd.c",
-    "deps/uSockets/src/context.c",
-    "deps/uSockets/src/loop.c",
-    "deps/uSockets/src/socket.c",
-    "deps/uSockets/src/udp.c"
-)
-
-if ($UseIOCP) {
-    # Copy IOCP patch files if not already present
-    $iocpSrc = "patches/uSockets/eventing/winsock_iocp.c"
-    $iocpDst = "deps/uSockets/src/eventing/winsock_iocp.c"
-    $iocpHdrSrc = "patches/uSockets/eventing/winsock_iocp.h"
-    $iocpHdrDst = "deps/uSockets/src/internal/eventing/winsock_iocp.h"
-    $loopInternalSrc = "patches/uSockets/loop_internal.c"
-    $loopInternalDst = "deps/uSockets/src/loop_internal.c"
-    
-    if (Test-Path $iocpSrc) {
-        Write-Host "Applying IOCP patch..."
-        Copy-Item $iocpSrc $iocpDst -Force
-        Copy-Item $iocpHdrSrc $iocpHdrDst -Force
-        Copy-Item $loopInternalSrc $loopInternalDst -Force
-    }
-    
-    # Add IOCP implementation and loop internals
-    $uSocketsSources += "deps/uSockets/src/eventing/winsock_iocp.c"
-    $uSocketsSources += "deps/uSockets/src/loop_internal.c"
-}
-
-$uSocketsLib = "build\lib\usockets.lib"
-if (Needs-Rebuild -Sources @("deps/uSockets/src") -Target $uSocketsLib) {
-    Write-Host "Rebuilding uSockets..."
-    & cl.exe $cppFlags /Fo"build\obj\" $uSocketsSources
-    if ($LASTEXITCODE -ne 0) { exit 1 }
-    
-    $objs = $uSocketsSources | ForEach-Object { "build\obj\" + [System.IO.Path]::GetFileNameWithoutExtension($_) + ".obj" }
-    & lib.exe /NOLOGO /OUT:$uSocketsLib $objs
-    if ($LASTEXITCODE -ne 0) { exit 1 }
-}
-$linkFlags += $uSocketsLib
-
-# Add Winsock libraries for IOCP
-if ($UseIOCP) {
-    $linkFlags += "ws2_32.lib"
-    $linkFlags += "mswsock.lib"
-}
-
-# 3.6: Z8 Core
+# 3.5: Z8 Core
 $coreSources = @(
     "src/main.cpp", "src/temporal_shims.cpp", "src/module/console.cpp", "src/module/node/fs/fs.cpp", 
     "src/module/node/path/path.cpp", "src/module/node/os/os.cpp", "src/module/node/process/process.cpp", 

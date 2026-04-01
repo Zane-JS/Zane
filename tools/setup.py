@@ -27,6 +27,11 @@ DEPENDENCIES = {
         "folder": "drogon",
         "is_source": True
     },
+    "trantor": {
+        "url": "https://github.com/an-tao/trantor/archive/refs/tags/v1.5.26.zip",
+        "folder": "drogon/trantor",
+        "is_source": True
+    },
     "brotli": {
         "url": "https://github.com/google/brotli/archive/refs/tags/v1.2.0.zip",
         "folder": "brotli",
@@ -75,6 +80,12 @@ def setup_dependencies():
     for name, info in DEPENDENCIES.items():
         target_folder = os.path.join(DEPS_DIR, info["folder"])
         
+        # Tạo thư mục cha nếu cần (cho nested folders như drogon/trantor)
+        parent_dir = os.path.dirname(target_folder)
+        if parent_dir and not os.path.exists(parent_dir):
+            os.makedirs(parent_dir)
+            print(f"📂 Đã tạo thư mục: {parent_dir}")
+        
         # Nếu thư mục đã tồn tại, bỏ qua (hoặc bạn có thể thêm logic force update)
         if os.path.exists(target_folder):
             print(f"⏭️  Thư viện {name} đã tồn tại, bỏ qua.")
@@ -84,18 +95,23 @@ def setup_dependencies():
         temp_file = os.path.join(DEPS_DIR, f"{name}{ext}")
         
         if download_file(info["url"], temp_file):
-            if extract_file(temp_file, DEPS_DIR):
+            # Extract to parent directory for nested folders
+            extract_to_dir = parent_dir if "/" in info["folder"] or "\\" in info["folder"] else DEPS_DIR
+            
+            if extract_file(temp_file, extract_to_dir):
                 # Xử lý trường hợp archive chứa thư mục con lồng nhau
                 if info.get("is_source"):
-                    # Tìm thư mục vừa giải nén (thường có tên dạng uWebSockets-20.74.0 hoặc openssl-3.6.1)
-                    # Chúng ta bỏ qua các folder đã tồn tại đúng tên
-                    extracted_dirs = [d for d in os.listdir(DEPS_DIR) 
-                                    if os.path.isdir(os.path.join(DEPS_DIR, d)) 
-                                    and d.lower().startswith(info["folder"].lower())
-                                    and d.lower() != info["folder"].lower()]
+                    # Get the base folder name (e.g., "trantor" from "drogon/trantor")
+                    base_folder = os.path.basename(info["folder"])
+                    
+                    # Tìm thư mục vừa giải nén
+                    extracted_dirs = [d for d in os.listdir(extract_to_dir) 
+                                    if os.path.isdir(os.path.join(extract_to_dir, d)) 
+                                    and d.lower().startswith(base_folder.lower())
+                                    and d.lower() != base_folder.lower()]
                     
                     if extracted_dirs:
-                        source_dir = os.path.join(DEPS_DIR, extracted_dirs[0])
+                        source_dir = os.path.join(extract_to_dir, extracted_dirs[0])
                         if source_dir != target_folder:
                             print(f"🚚 Di chuyển {extracted_dirs[0]} -> {info['folder']}...")
                             if os.path.exists(target_folder):

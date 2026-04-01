@@ -515,10 +515,6 @@ class Runtime {
             return module;
         }
 
-<<<<<<< Updated upstream
-        // node:http module
-=======
->>>>>>> Stashed changes
         if (specifier_str == "node:http") {
             v8::Local<v8::ObjectTemplate> http_template = z8::module::HTTP::createTemplate(p_isolate);
             v8::Local<v8::Object> http_instance = http_template->NewInstance(context).ToLocalChecked();
@@ -700,7 +696,9 @@ class Runtime {
                 std::chrono::milliseconds delay = z8::module::Timer::getNextDelay();
                 std::chrono::milliseconds timeout(10); 
                 if (delay.count() >= 0) {
-                    timeout = std::chrono::milliseconds(std::min(static_cast<int64_t>(delay.count()), 10LL));
+                    int64_t delay_ms = static_cast<int64_t>(delay.count());
+                    int64_t min_delay = (delay_ms < 10LL) ? delay_ms : 10LL;
+                    timeout = std::chrono::milliseconds(min_delay);
                 }
                 z8::TaskQueue::getInstance().wait(timeout);
             }

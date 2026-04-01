@@ -3,7 +3,10 @@
 param(
     [Parameter(Mandatory=$false)]
     [ValidateSet("Debug", "Release")]
-    [string]$Config = "Release"
+    [string]$Config = "Release",
+    
+    [Parameter(Mandatory=$false)]
+    [switch]$UseIOCP = $true
 )
 
 # --- Helper Functions ---
@@ -100,8 +103,19 @@ $cppFlags = @(
     "/O2", "/Oi", "/Ot", "/MT", "/DNDEBUG",
     "/DV8_COMPRESS_POINTERS",
     "/nologo", "/c",
-    "/Iv8/include", "/Isrc", "/Ideps/zlib", "/Ideps/brotli/c/include", "/Ideps/zstd/lib"
+    "/Iv8/include", "/Isrc", "/Ideps/zlib", "/Ideps/brotli/c/include", "/Ideps/zstd/lib",
+    "/Ideps/uSockets/src"
 )
+
+# Enable native IOCP for Windows (Z8's competitive advantage)
+if ($UseIOCP) {
+    Write-Host "Using native Windows IOCP backend (high performance, zero libuv dependency)"
+    $cppFlags += "/DLIBUS_USE_IOCP"
+    $cppFlags += "/DLIBUS_NO_SSL"  # Disable SSL for now
+} else {
+    Write-Host "Using libuv backend (fallback mode)"
+    $cppFlags += "/DLIBUS_USE_LIBUV"
+}
 
 $linkFlags = @(
     "/OUT:z8.exe", "/SUBSYSTEM:CONSOLE", "/MACHINE:X64", "/NOLOGO",
@@ -201,12 +215,61 @@ if (Needs-Rebuild -Sources @("deps/zstd/lib") -Target $zstdLib) {
 }
 $linkFlags += $zstdLib
 
-# 3.4: Z8 Core
+# 3.5: uSockets (with IOCP support)
+$uSocketsSources = @(
+    "deps/uSockets/src/bsd.c",
+    "deps/uSockets/src/context.c",
+    "deps/uSockets/src/loop.c",
+    "deps/uSockets/src/socket.c",
+    "deps/uSockets/src/udp.c"
+)
+
+if ($UseIOCP) {
+    # Copy IOCP patch files if not already present
+    $iocpSrc = "patches/uSockets/eventing/winsock_iocp.c"
+    $iocpDst = "deps/uSockets/src/eventing/winsock_iocp.c"
+    $iocpHdrSrc = "patches/uSockets/eventing/winsock_iocp.h"
+    $iocpHdrDst = "deps/uSockets/src/internal/eventing/winsock_iocp.h"
+    $loopInternalSrc = "patches/uSockets/loop_internal.c"
+    $loopInternalDst = "deps/uSockets/src/loop_internal.c"
+    
+    if (Test-Path $iocpSrc) {
+        Write-Host "Applying IOCP patch..."
+        Copy-Item $iocpSrc $iocpDst -Force
+        Copy-Item $iocpHdrSrc $iocpHdrDst -Force
+        Copy-Item $loopInternalSrc $loopInternalDst -Force
+    }
+    
+    # Add IOCP implementation and loop internals
+    $uSocketsSources += "deps/uSockets/src/eventing/winsock_iocp.c"
+    $uSocketsSources += "deps/uSockets/src/loop_internal.c"
+}
+
+$uSocketsLib = "build\lib\usockets.lib"
+if (Needs-Rebuild -Sources @("deps/uSockets/src") -Target $uSocketsLib) {
+    Write-Host "Rebuilding uSockets..."
+    & cl.exe $cppFlags /Fo"build\obj\" $uSocketsSources
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+    
+    $objs = $uSocketsSources | ForEach-Object { "build\obj\" + [System.IO.Path]::GetFileNameWithoutExtension($_) + ".obj" }
+    & lib.exe /NOLOGO /OUT:$uSocketsLib $objs
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+}
+$linkFlags += $uSocketsLib
+
+# Add Winsock libraries for IOCP
+if ($UseIOCP) {
+    $linkFlags += "ws2_32.lib"
+    $linkFlags += "mswsock.lib"
+}
+
+# 3.6: Z8 Core
 $coreSources = @(
     "src/main.cpp", "src/temporal_shims.cpp", "src/module/console.cpp", "src/module/node/fs/fs.cpp", 
     "src/module/node/path/path.cpp", "src/module/node/os/os.cpp", "src/module/node/process/process.cpp", 
     "src/module/node/util/util.cpp", "src/module/node/buffer/buffer.cpp", "src/module/node/zlib/zlib.cpp",
-    "src/module/node/events/events.cpp", "src/module/node/stream/stream.cpp", "src/module/timer.cpp"
+    "src/module/node/events/events.cpp", "src/module/node/stream/stream.cpp", "src/module/node/http/http.cpp",
+    "src/module/timer.cpp"
 )
 
 $coreObjs = @()

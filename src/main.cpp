@@ -30,7 +30,7 @@
 #include "module/node/buffer/buffer.h"
 #include "module/node/events/events.h"
 #include "module/node/fs/fs.h"
-
+#include "module/node/http/http.h"
 #include "module/node/os/os.h"
 #include "module/node/path/path.h"
 #include "module/node/process/process.h"
@@ -509,6 +509,41 @@ class Runtime {
                     for (uint32_t i = 0; i < prop_names->Length(); ++i) {
                         v8::Local<v8::String> name = prop_names->Get(context, i).ToLocalChecked().As<v8::String>();
                         module->SetSyntheticModuleExport(p_isolate, name, promises_obj->Get(context, name).ToLocalChecked()).Check();
+                    }
+                    return v8::Undefined(p_isolate);
+                });
+            return module;
+        }
+
+        // node:http module
+        if (specifier_str == "node:http") {
+            v8::Local<v8::ObjectTemplate> http_template = z8::module::HTTP::createTemplate(p_isolate);
+            v8::Local<v8::Object> http_instance = http_template->NewInstance(context).ToLocalChecked();
+            v8::Local<v8::Array> prop_names = http_instance->GetPropertyNames(context).ToLocalChecked();
+
+            std::vector<v8::Local<v8::String>> export_names;
+            export_names.push_back(v8::String::NewFromUtf8Literal(p_isolate, "default"));
+            for (uint32_t i = 0; i < prop_names->Length(); ++i) {
+                export_names.push_back(prop_names->Get(context, i).ToLocalChecked().As<v8::String>());
+            }
+
+            auto module = v8::Module::CreateSyntheticModule(
+                p_isolate,
+                v8::String::NewFromUtf8Literal(p_isolate, "node:http"),
+                v8::MemorySpan<const v8::Local<v8::String>>(export_names.data(), export_names.size()),
+                [](v8::Local<v8::Context> context, v8::Local<v8::Module> module) -> v8::MaybeLocal<v8::Value> {
+                    v8::Isolate* p_isolate = v8::Isolate::GetCurrent();
+                    v8::Local<v8::ObjectTemplate> http_template = z8::module::HTTP::createTemplate(p_isolate);
+                    v8::Local<v8::Object> http_obj = http_template->NewInstance(context).ToLocalChecked();
+                    module
+                        ->SetSyntheticModuleExport(
+                            p_isolate, v8::String::NewFromUtf8Literal(p_isolate, "default"), http_obj)
+                        .Check();
+                    v8::Local<v8::Array> prop_names = http_obj->GetPropertyNames(context).ToLocalChecked();
+                    for (uint32_t i = 0; i < prop_names->Length(); ++i) {
+                        v8::Local<v8::String> name = prop_names->Get(context, i).ToLocalChecked().As<v8::String>();
+                        module->SetSyntheticModuleExport(p_isolate, name, http_obj->Get(context, name).ToLocalChecked())
+                            .Check();
                     }
                     return v8::Undefined(p_isolate);
                 });

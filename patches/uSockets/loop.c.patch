@@ -1,0 +1,33 @@
+--- a/deps/uSockets/src/loop.c
++++ b/deps/uSockets/src/loop.c
+@@ -16,7 +16,9 @@
+  * limitations under the License.
+  */
+ 
+-#ifndef LIBUS_USE_IO_URING
++/* IOCP has its own complete implementation */
++#if !defined(LIBUS_USE_IO_URING) && !defined(LIBUS_USE_IOCP)
++
+ 
+ #include "libusockets.h"
+ #include "internal/internal.h"
+@@ -177,10 +179,12 @@ void us_internal_loop_post(struct us_loop_t *loop) {
+     }
+ }
+ 
++#endif /* !LIBUS_USE_IOCP */
++
+ long long us_loop_iteration_number(struct us_loop_t *loop) {
+     return loop->data.iteration_nr;
+ }
+ 
++#ifndef LIBUS_USE_IOCP
+ void us_loop_integrate(struct us_loop_t *loop) {
+ 
+ }
+@@ -391,4 +395,4 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
+     }
+ }
+ 
+-#endif
++#endif /* !LIBUS_USE_IOCP && !LIBUS_USE_IO_URING */

@@ -178,7 +178,7 @@ class StyleChecker:
 
     def check_file(self, filepath: Path) -> bool:
         """Check a single file for style violations."""
-        if filepath.suffix not in ('.cpp', '.h'):
+        if filepath.suffix not in ('.cpp', '.hpp'):
             return True
 
         # Skip external files

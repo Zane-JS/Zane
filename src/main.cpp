@@ -672,10 +672,11 @@ class Runtime {
                 }
             }
 
-            // 3. Final termination check
+            // 3. Final termination check (Timer, TaskQueue, ThreadPool, HTTP Servers)
             bool has_work = z8::module::Timer::hasActiveTimers() ||
                             !z8::TaskQueue::getInstance().isEmpty() ||
-                            z8::ThreadPool::getInstance().hasPendingTasks();
+                            z8::ThreadPool::getInstance().hasPendingTasks() ||
+                            z8::module::HTTPServer::hasActiveServers();
 
             if (!has_work) {
                 p_isolate->PerformMicrotaskCheckpoint();

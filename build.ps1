@@ -103,7 +103,7 @@ $cppFlags = @(
     "/O2", "/Oi", "/Ot", "/MT", "/DNDEBUG",
     "/DV8_COMPRESS_POINTERS",
     "/nologo", "/c",
-    "/Iv8/include", "/Isrc", "/Ideps/zlib", "/Ideps/brotli/c/include", "/Ideps/zstd/lib", "/Ideps/llhttp/include"
+    "/Iv8/include", "/Isrc", "/Ideps/zlib", "/Ideps/brotli/c/include", "/Ideps/zstd/lib", "/Ideps/llhttp/include", "/Ideps/trantor_install/include"
 )
 
 $linkFlags = @(
@@ -112,7 +112,8 @@ $linkFlags = @(
     "libcmt.lib", "libcpmt.lib",
     "winmm.lib", "dbghelp.lib", "shlwapi.lib", "user32.lib", "iphlpapi.lib",
     "advapi32.lib", "shell32.lib", "ole32.lib", "uuid.lib", "rpcrt4.lib", "ntdll.lib", "userenv.lib",
-    "ws2_32.lib"
+    "ws2_32.lib", "crypt32.lib",
+    "deps\trantor_install\lib\trantor.lib"
 )
 
 if ($Config -eq "Release") {
@@ -217,6 +218,12 @@ if (Needs-Rebuild -Sources @("deps/llhttp/src") -Target $llhttpLib) {
     if ($LASTEXITCODE -ne 0) { exit 1 }
 }
 $linkFlags += $llhttpLib
+
+# 3.6: Trantor (Networking Library)
+if (-not (Test-Path "deps/trantor_install/lib/trantor.lib")) {
+    Write-Host "Trantor libraries not found. Running build_trantor.ps1..." -ForegroundColor Yellow
+    & .\build_trantor.ps1 -Config $Config
+}
 
 # 3.6: Z8 Core
 $coreSources = @(

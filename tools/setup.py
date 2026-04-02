@@ -9,8 +9,7 @@ import time
 # Thư mục chứa các thư viện phụ thuộc
 DEPS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "deps")
 
-# Danh sách các thư viện cần tải (Ví dụ bản pre-built cho Windows x64)
-# Lưu ý: Các URL này là ví dụ, bạn nên cập nhật bản ổn định nhất
+# Danh sách các thư viện cần tải cho Z8 (Kế hoạch: Trantor + llhttp)
 DEPENDENCIES = {
     "openssl": {
         "url": "https://github.com/openssl/openssl/releases/download/openssl-3.6.1/openssl-3.6.1.tar.gz",
@@ -27,14 +26,9 @@ DEPENDENCIES = {
         "folder": "llhttp",
         "is_source": True
     },
-    "drogon": {
-        "url": "https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.12.zip",
-        "folder": "drogon",
-        "is_source": True
-    },
     "trantor": {
         "url": "https://github.com/an-tao/trantor/archive/refs/tags/v1.5.26.zip",
-        "folder": "drogon/trantor",
+        "folder": "trantor",
         "is_source": True
     },
     "brotli": {
@@ -85,13 +79,12 @@ def setup_dependencies():
     for name, info in DEPENDENCIES.items():
         target_folder = os.path.join(DEPS_DIR, info["folder"])
         
-        # Tạo thư mục cha nếu cần (cho nested folders như drogon/trantor)
+        # Tạo thư mục cha nếu cần
         parent_dir = os.path.dirname(target_folder)
         if parent_dir and not os.path.exists(parent_dir):
             os.makedirs(parent_dir)
-            print(f"📂 Đã tạo thư mục: {parent_dir}")
         
-        # Nếu thư mục đã tồn tại, bỏ qua (hoặc bạn có thể thêm logic force update)
+        # Nếu thư mục đã tồn tại, bỏ qua
         if os.path.exists(target_folder):
             print(f"⏭️  Thư viện {name} đã tồn tại, bỏ qua.")
             continue
@@ -100,52 +93,32 @@ def setup_dependencies():
         temp_file = os.path.join(DEPS_DIR, f"{name}{ext}")
         
         if download_file(info["url"], temp_file):
-            # Extract to parent directory for nested folders
-            extract_to_dir = parent_dir if "/" in info["folder"] or "\\" in info["folder"] else DEPS_DIR
-            
-            if extract_file(temp_file, extract_to_dir):
+            if extract_file(temp_file, DEPS_DIR):
                 # Xử lý trường hợp archive chứa thư mục con lồng nhau
                 if info.get("is_source"):
-                    # Get the base folder name (e.g., "trantor" from "drogon/trantor")
                     base_folder = os.path.basename(info["folder"])
                     
-                    # Tìm thư mục vừa giải nén
-                    extracted_dirs = [d for d in os.listdir(extract_to_dir) 
-                                    if os.path.isdir(os.path.join(extract_to_dir, d)) 
+                    extracted_dirs = [d for d in os.listdir(DEPS_DIR) 
+                                    if os.path.isdir(os.path.join(DEPS_DIR, d)) 
                                     and d.lower().startswith(base_folder.lower())
-                                    and d.lower() != base_folder.lower()]
+                                    and d.lower() != base_folder.lower()
+                                    and not d.startswith('.')]
                     
                     if extracted_dirs:
-                        source_dir = os.path.join(extract_to_dir, extracted_dirs[0])
-                        if source_dir != target_folder:
-                            print(f"🚚 Di chuyển {extracted_dirs[0]} -> {info['folder']}...")
-                            if os.path.exists(target_folder):
-                                shutil.rmtree(target_folder)
-                            
-                            # Thêm thời gian trễ nhỏ cho Windows để thả lỏng file lock
-                            if os.name == 'nt':
-                                time.sleep(1)
-                                
-                            success = False
-                            for i in range(5):
-                                try:
-                                    if os.path.exists(target_folder):
-                                        shutil.rmtree(target_folder)
-                                    shutil.move(source_dir, target_folder)
-                                    success = True
-                                    break
-                                except Exception as e:
-                                    print(f"⚠️ Thử lần {i+1} - Không thể di chuyển thư mục: {e}")
-                                    time.sleep(1)
-                            
-                            if not success:
-                                print(f"❌ Thất bại hoàn toàn khi di chuyển {name}. Vui lòng di chuyển thủ công.")
+                        source_dir = os.path.join(DEPS_DIR, extracted_dirs[0])
+                        print(f"🚚 Di chuyển {extracted_dirs[0]} -> {info['folder']}...")
+                        if os.path.exists(target_folder):
+                            shutil.rmtree(target_folder)
+                        
+                        if os.name == 'nt':
+                            time.sleep(0.5)
+                        shutil.move(source_dir, target_folder)
                 
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
                 print(f"🎉 Hoàn tất thiết lập {name}!")
 
 if __name__ == "__main__":
-    print("🚀 Bắt đầu thiết lập các thư viện phụ thuộc cho Z8...")
+    print("🚀 Bắt đầu thiết lập các thư viện phụ thuộc cho Z8 (Trantor + llhttp)...")
     setup_dependencies()
     print("\n✨ Tất cả thư viện đã sẵn sàng trong thư mục /deps")

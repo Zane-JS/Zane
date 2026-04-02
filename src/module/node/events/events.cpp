@@ -1,5 +1,5 @@
-#include "events.h"
-#include "task_queue.h" // Added for Task and TaskQueue
+#include "events.hpp"
+#include "task_queue.hpp" // Added for Task and TaskQueue
 #include <cstring>
 #include <vector>
 #include <algorithm>

@@ -1,7 +1,7 @@
-#include "fs.h"
-#include "../stream/stream.h"
-#include "../buffer/buffer.h"
-#include "../../adaptive_io.h"
+#include "fs.hpp"
+#include "../stream/stream.hpp"
+#include "../buffer/buffer.hpp"
+#include "../../adaptive_io.hpp"
 #include <chrono>
 #include <fcntl.h> // For O_* constants
 #include <filesystem>
@@ -59,8 +59,8 @@ static int64_t fs_pwrite(int32_t fd, const void* p_buf, size_t count, int64_t of
 #else
 #include <unistd.h>
 #endif
-#include "task_queue.h"
-#include "thread_pool.h"
+#include "task_queue.hpp"
+#include "thread_pool.hpp"
 #include <v8-promise.h>
 
 #ifdef _WIN32

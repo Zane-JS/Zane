@@ -1,6 +1,6 @@
-#include "zlib.h"
-#include "../buffer/buffer.h"
-#include "../stream/stream.h"
+#include "zlib.hpp"
+#include "../buffer/buffer.hpp"
+#include "../stream/stream.hpp"
 #include <iostream>
 #include <vector>
 #include <cstring>
@@ -9,8 +9,8 @@
 #include "../../../../deps/brotli/c/include/brotli/encode.h"
 #include "../../../../deps/brotli/c/include/brotli/decode.h"
 #include "../../../../deps/zstd/lib/zstd.h"
-#include "task_queue.h"
-#include "thread_pool.h"
+#include "task_queue.hpp"
+#include "thread_pool.hpp"
 
 namespace z8 {
 namespace module {

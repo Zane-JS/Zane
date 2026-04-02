@@ -1,5 +1,5 @@
-#include "stream.h"
-#include "task_queue.h"
+#include "stream.hpp"
+#include "task_queue.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>

@@ -2,7 +2,7 @@
 #define Z8_MODULE_STREAM_H
 
 #include "v8.h"
-#include "../events/events.h"
+#include "../events/events.hpp"
 #include <vector> // Added for std::vector
 #include <cstdint>
 

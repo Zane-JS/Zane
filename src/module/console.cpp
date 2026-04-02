@@ -1,6 +1,6 @@
-#include "console.h"
-#include "adaptive_io.h"
-#include "node/util/util.h"
+#include "console.hpp"
+#include "adaptive_io.hpp"
+#include "node/util/util.hpp"
 #include <string.h>
 #ifdef _WIN32
 #include <io.h>

@@ -417,7 +417,7 @@ class StyleChecker:
         all_good = True
         for filepath in sorted(directory.rglob('*.cpp')):
             if not self.check_file(filepath): all_good = False
-        for filepath in sorted(directory.rglob('*.h')):
+        for filepath in sorted(directory.rglob('*.hpp')):
             if not self.check_file(filepath): all_good = False
         return all_good
 

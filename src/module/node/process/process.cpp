@@ -1,5 +1,5 @@
-#include "process.h"
-#include "config.h"
+#include "process.hpp"
+#include "config.hpp"
 #include <chrono>
 #include <filesystem>
 #include <fstream>

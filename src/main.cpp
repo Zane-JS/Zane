@@ -19,26 +19,26 @@
 #include "v8.h"
 #include <v8-isolate.h>
 
-#include "config.h"
+#include "config.hpp"
 #include "libplatform/libplatform.h"
 
 // Environment interface
-#include "module/console.h"
-#include "module/timer.h"
+#include "module/console.hpp"
+#include "module/timer.hpp"
 
 // Interface for the node.js module
-#include "module/node/buffer/buffer.h"
-#include "module/node/events/events.h"
-#include "module/node/fs/fs.h"
-#include "module/node/http/http.h"
-#include "module/node/os/os.h"
-#include "module/node/path/path.h"
-#include "module/node/process/process.h"
-#include "module/node/util/util.h"
-#include "module/node/zlib/zlib.h"
-#include "module/node/stream/stream.h"
-#include "task_queue.h"
-#include "thread_pool.h"
+#include "module/node/buffer/buffer.hpp"
+#include "module/node/events/events.hpp"
+#include "module/node/fs/fs.hpp"
+#include "module/node/http/http.hpp"
+#include "module/node/os/os.hpp"
+#include "module/node/path/path.hpp"
+#include "module/node/process/process.hpp"
+#include "module/node/util/util.hpp"
+#include "module/node/zlib/zlib.hpp"
+#include "module/node/stream/stream.hpp"
+#include "task_queue.hpp"
+#include "thread_pool.hpp"
 
 // Windows headers
 #define NOMINMAX

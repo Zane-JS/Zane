@@ -36,9 +36,11 @@ public:
     void close(v8::Local<v8::Function> callback);
     void setRequestHandler(v8::Local<v8::Function> handler);
     void setJSObject(v8::Local<v8::Object> obj);
+    void markDisposed();
      
     v8::Isolate* getIsolate() { return p_isolate; }
     bool getListening() const { return m_listening; }
+    bool isDisposed() const { return m_disposed; }
      
     static bool hasActiveServers() { return m_active_servers > 0; }
      
@@ -49,6 +51,7 @@ private:
     v8::Global<v8::Function> m_request_handler;
     
     bool m_listening;
+    bool m_disposed;
     int32_t m_port;
     std::string m_host;
     
@@ -123,13 +126,15 @@ private:
 class HTTPResponse {
 public:
     HTTPResponse(v8::Isolate* p_isolate, const trantor::TcpConnectionPtr& conn);
+    ~HTTPResponse();
     v8::Local<v8::Object> toObject();
-    
+     
     void writeHead(int32_t status_code, v8::Local<v8::Object> headers);
     void writeHead(int32_t status_code, const std::string& status_message, v8::Local<v8::Object> headers);
     void setHeader(const std::string& name, const std::string& value);
+    void setHeader(const std::string& name, const std::vector<std::string>& values);
     bool hasHeader(const std::string& name);
-    std::string getHeader(const std::string& name);
+    const std::vector<std::string>* getHeader(const std::string& name) const;
     void removeHeader(const std::string& name);
     v8::Local<v8::Array> getHeaderNames();
     v8::Local<v8::Object> getHeaders();
@@ -143,21 +148,25 @@ public:
     void setStatusCode(int32_t code) { m_status_code = code; }
     std::string getStatusMessage() const { return m_status_message; }
     void setStatusMessage(const std::string& msg) { m_status_message = msg; }
-    
+    void markGcPending() { m_gc_pending = true; }
+    bool canDeleteImmediately() const { return m_finished || !m_headers_sent; }
+     
 private:
     v8::Isolate* p_isolate;
     trantor::TcpConnectionPtr m_conn;
     v8::Global<v8::Object> m_res_obj;
     int32_t m_status_code;
     std::string m_status_message;
-    std::map<std::string, std::string> m_headers;
+    std::map<std::string, std::vector<std::string>> m_headers;
     bool m_headers_sent;
     bool m_finished;
     bool m_use_chunked_encoding;
+    bool m_gc_pending;
      
     void sendHeaders();
     void sendChunk(const std::string& data);
     void emit(const char* p_event_name);
+    std::string getFirstHeaderValue(const std::string& name) const;
 };
 
 class HTTPClientRequest {
@@ -185,6 +194,9 @@ public:
     const std::map<std::string, std::string>& getHeaders() const { return m_headers; }
     bool getFinished() const { return m_finished; }
     bool getExecuted() const { return m_executed; }
+    bool isComplete() const { return m_request_complete; }
+    void markGcPending() { m_gc_pending = true; }
+    bool canDeleteImmediately() const { return !m_executed || m_request_complete; }
     void appendResponseHeaderField(const char* p_data, size_t length);
     void appendResponseHeaderValue(const char* p_data, size_t length);
     void finishPendingResponseHeader();
@@ -237,6 +249,8 @@ private:
     std::unique_ptr<trantor::EventLoopThread> up_loop_thread;
     bool m_finished;
     bool m_executed;
+    bool m_request_complete;
+    bool m_gc_pending;
 
     v8::Global<v8::Object> m_js_object;
     v8::Global<v8::Object> m_response_obj;

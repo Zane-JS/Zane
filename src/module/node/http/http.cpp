@@ -20,6 +20,15 @@ std::atomic<int32_t> HTTPServer::m_active_servers{0};
 
 namespace {
 
+template <typename T>
+T* unwrapExternalPointer(v8::Local<v8::Object> obj) {
+    if (obj.IsEmpty() || obj->InternalFieldCount() < 1) {
+        return nullptr;
+    }
+
+    return static_cast<T*>(obj->GetAlignedPointerFromInternalField(0, v8::kEmbedderDataTypeTagDefault));
+}
+
 std::string normalizeHeaderName(const std::string& name) {
     std::string normalized = name;
     for (char& c : normalized) {
@@ -53,53 +62,120 @@ bool shouldDiscardDuplicateHeader(const std::string& name) {
 
 std::string getDefaultStatusMessage(int32_t status_code) {
     switch (status_code) {
-    case 100:
-        return "Continue";
-    case 101:
-        return "Switching Protocols";
-    case 200:
-        return "OK";
-    case 201:
-        return "Created";
-    case 204:
-        return "No Content";
-    case 301:
-        return "Moved Permanently";
-    case 302:
-        return "Found";
-    case 304:
-        return "Not Modified";
-    case 400:
-        return "Bad Request";
-    case 401:
-        return "Unauthorized";
-    case 403:
-        return "Forbidden";
-    case 404:
-        return "Not Found";
-    case 405:
-        return "Method Not Allowed";
-    case 408:
-        return "Request Timeout";
-    case 409:
-        return "Conflict";
-    case 413:
-        return "Payload Too Large";
-    case 429:
-        return "Too Many Requests";
-    case 500:
-        return "Internal Server Error";
-    case 501:
-        return "Not Implemented";
-    case 502:
-        return "Bad Gateway";
-    case 503:
-        return "Service Unavailable";
-    case 504:
-        return "Gateway Timeout";
+    case 100: return "Continue";
+    case 101: return "Switching Protocols";
+    case 102: return "Processing";
+    case 103: return "Early Hints";
+    case 200: return "OK";
+    case 201: return "Created";
+    case 202: return "Accepted";
+    case 203: return "Non-Authoritative Information";
+    case 204: return "No Content";
+    case 205: return "Reset Content";
+    case 206: return "Partial Content";
+    case 207: return "Multi-Status";
+    case 208: return "Already Reported";
+    case 226: return "IM Used";
+    case 300: return "Multiple Choices";
+    case 301: return "Moved Permanently";
+    case 302: return "Found";
+    case 303: return "See Other";
+    case 304: return "Not Modified";
+    case 305: return "Use Proxy";
+    case 307: return "Temporary Redirect";
+    case 308: return "Permanent Redirect";
+    case 400: return "Bad Request";
+    case 401: return "Unauthorized";
+    case 402: return "Payment Required";
+    case 403: return "Forbidden";
+    case 404: return "Not Found";
+    case 405: return "Method Not Allowed";
+    case 406: return "Not Acceptable";
+    case 407: return "Proxy Authentication Required";
+    case 408: return "Request Timeout";
+    case 409: return "Conflict";
+    case 410: return "Gone";
+    case 411: return "Length Required";
+    case 412: return "Precondition Failed";
+    case 413: return "Payload Too Large";
+    case 414: return "URI Too Long";
+    case 415: return "Unsupported Media Type";
+    case 416: return "Range Not Satisfiable";
+    case 417: return "Expectation Failed";
+    case 418: return "I'm a Teapot";
+    case 421: return "Misdirected Request";
+    case 422: return "Unprocessable Content";
+    case 423: return "Locked";
+    case 424: return "Failed Dependency";
+    case 425: return "Too Early";
+    case 426: return "Upgrade Required";
+    case 429: return "Too Many Requests";
+    case 431: return "Request Header Fields Too Large";
+    case 451: return "Unavailable For Legal Reasons";
+    case 500: return "Internal Server Error";
+    case 501: return "Not Implemented";
+    case 502: return "Bad Gateway";
+    case 503: return "Service Unavailable";
+    case 504: return "Gateway Timeout";
+    case 505: return "HTTP Version Not Supported";
+    case 506: return "Variant Also Negotiates";
+    case 507: return "Insufficient Storage";
+    case 508: return "Loop Detected";
+    case 510: return "Not Extended";
+    case 511: return "Network Authentication Required";
     default:
-        return "OK";
+        return "";
     }
+}
+
+bool tryParsePort(const std::string& value, int32_t* p_port) {
+    if (!p_port || value.empty()) {
+        return false;
+    }
+
+    try {
+        size_t parsed = 0;
+        int32_t port = std::stoi(value, &parsed);
+        if (parsed != value.size() || port < 0 || port > 65535) {
+            return false;
+        }
+        *p_port = port;
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+bool extractHeaderValues(v8::Isolate* p_isolate,
+                         v8::Local<v8::Value> value,
+                         std::vector<std::string>* p_values) {
+    if (!p_values) {
+        return false;
+    }
+
+    p_values->clear();
+    if (value->IsArray()) {
+        v8::Local<v8::Array> array = value.As<v8::Array>();
+        v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+        for (uint32_t i = 0; i < array->Length(); i++) {
+            v8::Local<v8::Value> entry;
+            if (!array->Get(context, i).ToLocal(&entry) || !entry->IsString()) {
+                return false;
+            }
+
+            v8::String::Utf8Value entry_str(p_isolate, entry);
+            p_values->push_back(std::string(*entry_str, entry_str.length()));
+        }
+        return true;
+    }
+
+    if (value->IsString()) {
+        v8::String::Utf8Value utf8_value(p_isolate, value);
+        p_values->push_back(std::string(*utf8_value, utf8_value.length()));
+        return true;
+    }
+
+    return false;
 }
 
 bool readBinaryValue(v8::Isolate* p_isolate, v8::Local<v8::Value> value, std::string* p_output) {
@@ -135,6 +211,40 @@ void copyObjectProperties(v8::Isolate* p_isolate,
     for (uint32_t i = 0; i < prop_names->Length(); i++) {
         v8::Local<v8::Value> key = prop_names->Get(context, i).ToLocalChecked();
         target->Set(context, key, source->Get(context, key).ToLocalChecked()).Check();
+    }
+}
+
+void weakDeleteResponse(const v8::WeakCallbackInfo<HTTPResponse>& info) {
+    HTTPResponse* p_response = info.GetParameter();
+    if (!p_response) {
+        return;
+    }
+
+    p_response->markGcPending();
+    if (p_response->canDeleteImmediately()) {
+        delete p_response;
+    }
+}
+
+void weakDeleteServer(const v8::WeakCallbackInfo<HTTPServer>& info) {
+    HTTPServer* p_server = info.GetParameter();
+    if (!p_server) {
+        return;
+    }
+
+    p_server->markDisposed();
+    delete p_server;
+}
+
+void weakDeleteClientRequest(const v8::WeakCallbackInfo<HTTPClientRequest>& info) {
+    HTTPClientRequest* p_request = info.GetParameter();
+    if (!p_request) {
+        return;
+    }
+
+    p_request->markGcPending();
+    if (p_request->canDeleteImmediately()) {
+        delete p_request;
     }
 }
 
@@ -185,7 +295,7 @@ static int32_t on_message_complete(llhttp_t* p_parser) {
 
 // HTTPServer Implementation
 HTTPServer::HTTPServer(v8::Isolate* p_isolate)
-    : p_isolate(p_isolate), m_listening(false), m_port(0) {
+    : p_isolate(p_isolate), m_listening(false), m_disposed(false), m_port(0) {
 }
 
 HTTPServer::~HTTPServer() {
@@ -193,6 +303,13 @@ HTTPServer::~HTTPServer() {
         if (up_tcp_server) up_tcp_server->stop();
         m_active_servers--;
     }
+    up_tcp_server.reset();
+    m_server_obj.Reset();
+    m_request_handler.Reset();
+}
+
+void HTTPServer::markDisposed() {
+    m_disposed = true;
 }
 
 void HTTPServer::setRequestHandler(v8::Local<v8::Function> handler) {
@@ -201,6 +318,7 @@ void HTTPServer::setRequestHandler(v8::Local<v8::Function> handler) {
 
 void HTTPServer::setJSObject(v8::Local<v8::Object> obj) {
     m_server_obj.Reset(p_isolate, obj);
+    m_server_obj.SetWeak(this, weakDeleteServer, v8::WeakCallbackType::kParameter);
 }
 
 void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Function> callback) {
@@ -535,7 +653,11 @@ v8::Local<v8::Object> HTTPRequest::toObject() {
 // HTTPResponse Implementation
 HTTPResponse::HTTPResponse(v8::Isolate* p_isolate, const trantor::TcpConnectionPtr& p_conn)
     : p_isolate(p_isolate), m_conn(p_conn), m_status_code(200),
-      m_headers_sent(false), m_finished(false), m_use_chunked_encoding(false) {}
+      m_headers_sent(false), m_finished(false), m_use_chunked_encoding(false), m_gc_pending(false) {}
+
+HTTPResponse::~HTTPResponse() {
+    m_res_obj.Reset();
+}
 
 v8::Local<v8::Object> HTTPResponse::toObject() {
     v8::EscapableHandleScope handle_scope(p_isolate);
@@ -580,10 +702,11 @@ v8::Local<v8::Object> HTTPResponse::toObject() {
     v8::Local<v8::Object> ee_obj = ee_ctor->NewInstance(p_context).ToLocalChecked();
 
     v8::Local<v8::Object> res_obj = tmpl->NewInstance(p_context).ToLocalChecked();
-    res_obj->SetInternalField(0, v8::External::New(p_isolate, this));
+    res_obj->SetAlignedPointerInInternalField(0, this, v8::kEmbedderDataTypeTagDefault);
     copyObjectProperties(p_isolate, p_context, ee_obj, res_obj);
 
     m_res_obj.Reset(p_isolate, res_obj);
+    m_res_obj.SetWeak(this, weakDeleteResponse, v8::WeakCallbackType::kParameter);
     return handle_scope.Escape(res_obj);
 }
 
@@ -606,15 +729,17 @@ void HTTPResponse::writeHead(int32_t status_code, const std::string& status_mess
             v8::Local<v8::Value> key = props->Get(p_context, i).ToLocalChecked();
             v8::Local<v8::Value> val = headers->Get(p_context, key).ToLocalChecked();
             v8::String::Utf8Value key_str(p_isolate, key);
-            v8::String::Utf8Value val_str(p_isolate, val);
-            m_headers[normalizeHeaderName(std::string(*key_str, key_str.length()))] = std::string(*val_str, val_str.length());
+            std::vector<std::string> values;
+            if (extractHeaderValues(p_isolate, val, &values)) {
+                m_headers[normalizeHeaderName(std::string(*key_str, key_str.length()))] = values;
+            }
         }
     }
 
     if (!hasHeader("content-length") && !hasHeader("transfer-encoding")) {
-        m_headers["transfer-encoding"] = "chunked";
+        m_headers["transfer-encoding"] = {"chunked"};
         m_use_chunked_encoding = true;
-    } else if (getHeader("transfer-encoding") == "chunked") {
+    } else if (getFirstHeaderValue("transfer-encoding") == "chunked") {
         m_use_chunked_encoding = true;
     }
 
@@ -622,22 +747,26 @@ void HTTPResponse::writeHead(int32_t status_code, const std::string& status_mess
 }
 
 void HTTPResponse::setHeader(const std::string& name, const std::string& value) {
+    setHeader(name, std::vector<std::string>{value});
+}
+
+void HTTPResponse::setHeader(const std::string& name, const std::vector<std::string>& values) {
     if (m_headers_sent) {
         return;
     }
-    m_headers[normalizeHeaderName(name)] = value;
+    m_headers[normalizeHeaderName(name)] = values;
 }
 
 bool HTTPResponse::hasHeader(const std::string& name) {
     return m_headers.find(normalizeHeaderName(name)) != m_headers.end();
 }
 
-std::string HTTPResponse::getHeader(const std::string& name) {
+const std::vector<std::string>* HTTPResponse::getHeader(const std::string& name) const {
     auto it = m_headers.find(normalizeHeaderName(name));
     if (it != m_headers.end()) {
-        return it->second;
+        return &it->second;
     }
-    return "";
+    return nullptr;
 }
 
 void HTTPResponse::removeHeader(const std::string& name) {
@@ -663,9 +792,23 @@ v8::Local<v8::Object> HTTPResponse::getHeaders() {
     v8::Local<v8::Object> hdrs = v8::Object::New(p_isolate);
     v8::Local<v8::Context> p_context = p_isolate->GetCurrentContext();
     for (const auto& pair : m_headers) {
-        hdrs->Set(p_context, 
-                 v8::String::NewFromUtf8(p_isolate, pair.first.c_str()).ToLocalChecked(),
-                 v8::String::NewFromUtf8(p_isolate, pair.second.c_str()).ToLocalChecked()).Check();
+        v8::Local<v8::Value> header_value;
+        if (pair.second.size() <= 1) {
+            std::string value = pair.second.empty() ? "" : pair.second.front();
+            header_value = v8::String::NewFromUtf8(p_isolate, value.c_str()).ToLocalChecked();
+        } else {
+            v8::Local<v8::Array> values = v8::Array::New(p_isolate, static_cast<int32_t>(pair.second.size()));
+            for (uint32_t i = 0; i < pair.second.size(); i++) {
+                values->Set(p_context,
+                            i,
+                            v8::String::NewFromUtf8(p_isolate, pair.second[i].c_str()).ToLocalChecked()).Check();
+            }
+            header_value = values;
+        }
+
+        hdrs->Set(p_context,
+                  v8::String::NewFromUtf8(p_isolate, pair.first.c_str()).ToLocalChecked(),
+                  header_value).Check();
     }
     return handle_scope.Escape(hdrs);
 }
@@ -677,9 +820,9 @@ void HTTPResponse::write(const std::string& data) {
 
     if (!m_headers_sent) {
         if (!hasHeader("content-length") && !hasHeader("transfer-encoding")) {
-            m_headers["transfer-encoding"] = "chunked";
+            m_headers["transfer-encoding"] = {"chunked"};
             m_use_chunked_encoding = true;
-        } else if (getHeader("transfer-encoding") == "chunked") {
+        } else if (getFirstHeaderValue("transfer-encoding") == "chunked") {
             m_use_chunked_encoding = true;
         }
         sendHeaders();
@@ -699,8 +842,8 @@ void HTTPResponse::end(const std::string& data) {
 
     if (!m_headers_sent) {
         if (!hasHeader("content-length") && !hasHeader("transfer-encoding")) {
-            m_headers["content-length"] = std::to_string(data.size());
-        } else if (getHeader("transfer-encoding") == "chunked") {
+            m_headers["content-length"] = {std::to_string(data.size())};
+        } else if (getFirstHeaderValue("transfer-encoding") == "chunked") {
             m_use_chunked_encoding = true;
         }
         sendHeaders();
@@ -720,6 +863,9 @@ void HTTPResponse::end(const std::string& data) {
 
     m_finished = true;
     emit("finish");
+    if (m_gc_pending) {
+        delete this;
+    }
 }
 
 void HTTPResponse::sendHeaders() {
@@ -731,7 +877,9 @@ void HTTPResponse::sendHeaders() {
     std::string msg = m_status_message.empty() ? getDefaultStatusMessage(m_status_code) : m_status_message;
     ss << "HTTP/1.1 " << m_status_code << " " << msg << "\r\n";
     for (const auto& pair : m_headers) {
-        ss << pair.first << ": " << pair.second << "\r\n";
+        for (const std::string& value : pair.second) {
+            ss << pair.first << ": " << value << "\r\n";
+        }
     }
     ss << "\r\n";
     m_conn->send(ss.str());
@@ -766,6 +914,14 @@ void HTTPResponse::emit(const char* p_event_name) {
         v8::String::NewFromUtf8(p_isolate, p_event_name).ToLocalChecked()
     };
     (void)emit_val.As<v8::Function>()->Call(p_context, res_obj, 1, emit_args);
+}
+
+std::string HTTPResponse::getFirstHeaderValue(const std::string& name) const {
+    const std::vector<std::string>* p_values = getHeader(name);
+    if (!p_values || p_values->empty()) {
+        return "";
+    }
+    return p_values->front();
 }
 
 // HTTP Module Template
@@ -806,7 +962,7 @@ void HTTP::createServer(const v8::FunctionCallbackInfo<v8::Value>& args) {
     v8::Local<v8::Object> ee_obj = ee_ctor->NewInstance(context).ToLocalChecked();
 
     v8::Local<v8::Object> server_obj = tmpl->NewInstance(context).ToLocalChecked();
-    server_obj->SetInternalField(0, v8::External::New(p_isolate, p_server));
+    server_obj->SetAlignedPointerInInternalField(0, p_server, v8::kEmbedderDataTypeTagDefault);
     copyObjectProperties(p_isolate, context, ee_obj, server_obj);
     p_server->setJSObject(server_obj);
     args.GetReturnValue().Set(server_obj);
@@ -865,11 +1021,13 @@ void HTTP::responseWriteHead(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
 void HTTP::responseSetHeader(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto* p_response = unwrapResponse(args.This());
-    if (p_response && args.Length() >= 2 && args[0]->IsString() && args[1]->IsString()) {
+    if (p_response && args.Length() >= 2 && args[0]->IsString()) {
         v8::Isolate* p_isolate = args.GetIsolate();
         v8::String::Utf8Value name(p_isolate, args[0]);
-        v8::String::Utf8Value value(p_isolate, args[1]);
-        p_response->setHeader(std::string(*name, name.length()), std::string(*value, value.length()));
+        std::vector<std::string> values;
+        if (extractHeaderValues(p_isolate, args[1], &values)) {
+            p_response->setHeader(std::string(*name, name.length()), values);
+        }
     }
 }
 
@@ -878,9 +1036,18 @@ void HTTP::responseGetHeader(const v8::FunctionCallbackInfo<v8::Value>& args) {
     if (p_response && args.Length() >= 1 && args[0]->IsString()) {
         v8::Isolate* p_isolate = args.GetIsolate();
         v8::String::Utf8Value name(p_isolate, args[0]);
-        std::string val = p_response->getHeader(std::string(*name, name.length()));
-        if (!val.empty()) {
-            args.GetReturnValue().Set(v8::String::NewFromUtf8(p_isolate, val.c_str()).ToLocalChecked());
+        const std::vector<std::string>* p_values = p_response->getHeader(std::string(*name, name.length()));
+        if (p_values && !p_values->empty()) {
+            if (p_values->size() == 1) {
+                args.GetReturnValue().Set(v8::String::NewFromUtf8(p_isolate, p_values->front().c_str()).ToLocalChecked());
+            } else {
+                v8::Local<v8::Array> values = v8::Array::New(p_isolate, static_cast<int32_t>(p_values->size()));
+                v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+                for (uint32_t i = 0; i < p_values->size(); i++) {
+                    values->Set(context, i, v8::String::NewFromUtf8(p_isolate, (*p_values)[i].c_str()).ToLocalChecked()).Check();
+                }
+                args.GetReturnValue().Set(values);
+            }
         } else {
             args.GetReturnValue().SetNull();
         }
@@ -942,9 +1109,18 @@ void HTTP::responseEnd(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
 void HTTP::getMethods(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info) {
     v8::Isolate* p_isolate = info.GetIsolate();
-    const char* methods[] = {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"};
-    v8::Local<v8::Array> arr = v8::Array::New(p_isolate, 7);
-    for (int32_t i = 0; i < 7; i++) arr->Set(p_isolate->GetCurrentContext(), i, v8::String::NewFromUtf8(p_isolate, methods[i]).ToLocalChecked()).Check();
+    const char* methods[] = {
+        "ACL", "BIND", "CHECKOUT", "CONNECT", "COPY", "DELETE", "GET", "HEAD",
+        "LINK", "LOCK", "M-SEARCH", "MERGE", "MKACTIVITY", "MKCALENDAR", "MKCOL",
+        "MOVE", "NOTIFY", "OPTIONS", "PATCH", "POST", "PROPFIND", "PROPPATCH",
+        "PURGE", "PUT", "QUERY", "REBIND", "REPORT", "SEARCH", "SOURCE",
+        "SUBSCRIBE", "TRACE", "UNBIND", "UNLINK", "UNLOCK", "UNSUBSCRIBE"
+    };
+    constexpr int32_t METHOD_COUNT = sizeof(methods) / sizeof(methods[0]);
+    v8::Local<v8::Array> arr = v8::Array::New(p_isolate, METHOD_COUNT);
+    for (int32_t i = 0; i < METHOD_COUNT; i++) {
+        arr->Set(p_isolate->GetCurrentContext(), i, v8::String::NewFromUtf8(p_isolate, methods[i]).ToLocalChecked()).Check();
+    }
     info.GetReturnValue().Set(arr);
 }
 
@@ -952,7 +1128,13 @@ void HTTP::getStatusCodes(v8::Local<v8::Name> property, const v8::PropertyCallba
     v8::Isolate* p_isolate = info.GetIsolate();
     v8::Local<v8::Object> codes = v8::Object::New(p_isolate);
     v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
-    const int32_t status_codes[] = {100, 101, 200, 201, 204, 301, 302, 304, 400, 401, 403, 404, 405, 408, 409, 413, 429, 500, 501, 502, 503, 504};
+    const int32_t status_codes[] = {
+        100, 101, 102, 103, 200, 201, 202, 203, 204, 205, 206, 207, 208, 226,
+        300, 301, 302, 303, 304, 305, 307, 308, 400, 401, 402, 403, 404, 405,
+        406, 407, 408, 409, 410, 411, 412, 413, 414, 415, 416, 417, 418, 421,
+        422, 423, 424, 425, 426, 429, 431, 451, 500, 501, 502, 503, 504, 505,
+        506, 507, 508, 510, 511
+    };
     for (int32_t status_code : status_codes) {
         std::string status_key = std::to_string(status_code);
         std::string status_message = getDefaultStatusMessage(status_code);
@@ -1020,18 +1202,15 @@ void HTTP::serverGetListening(v8::Local<v8::Name> property, const v8::PropertyCa
 }
 
 HTTPServer* HTTP::unwrapServer(v8::Local<v8::Object> obj) {
-    if (obj->InternalFieldCount() > 0) return static_cast<HTTPServer*>(obj->GetInternalField(0).As<v8::External>()->Value());
-    return nullptr;
+    return unwrapExternalPointer<HTTPServer>(obj);
 }
 
 HTTPResponse* HTTP::unwrapResponse(v8::Local<v8::Object> obj) {
-    if (obj->InternalFieldCount() > 0) return static_cast<HTTPResponse*>(obj->GetInternalField(0).As<v8::External>()->Value());
-    return nullptr;
+    return unwrapExternalPointer<HTTPResponse>(obj);
 }
 
 HTTPClientRequest* HTTP::unwrapClientRequest(v8::Local<v8::Object> obj) {
-    if (obj->InternalFieldCount() > 0) return static_cast<HTTPClientRequest*>(obj->GetInternalField(0).As<v8::External>()->Value());
-    return nullptr;
+    return unwrapExternalPointer<HTTPClientRequest>(obj);
 }
 
 // --- HTTPClientRequest Implementation ---
@@ -1045,7 +1224,9 @@ HTTPClientRequest::HTTPClientRequest(v8::Isolate* isolate, const std::string& me
       m_status_code(0),
       m_last_header_state(HeaderParseState::NONE),
       m_finished(false),
-      m_executed(false) {
+      m_executed(false),
+      m_request_complete(false),
+      m_gc_pending(false) {
     if (!callback.IsEmpty()) {
         m_response_callback.Reset(p_isolate, callback);
     }
@@ -1154,7 +1335,7 @@ v8::Local<v8::Object> HTTPClientRequest::createObject(v8::Isolate* p_isolate) {
     v8::Local<v8::Function> ee_ctor = ee_tmpl->GetFunction(context).ToLocalChecked();
     v8::Local<v8::Object> obj = ee_ctor->NewInstance(context).ToLocalChecked();
     v8::Local<v8::Object> client_obj = tmpl->NewInstance(context).ToLocalChecked();
-    client_obj->SetInternalField(0, v8::External::New(p_isolate, this));
+    client_obj->SetAlignedPointerInInternalField(0, this, v8::kEmbedderDataTypeTagDefault);
     copyObjectProperties(p_isolate, context, obj, client_obj);
     client_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "method"), v8::String::NewFromUtf8(p_isolate, m_method.c_str()).ToLocalChecked()).Check();
     client_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "path"), v8::String::NewFromUtf8(p_isolate, m_path.c_str()).ToLocalChecked()).Check();
@@ -1165,12 +1346,13 @@ v8::Local<v8::Object> HTTPClientRequest::createObject(v8::Isolate* p_isolate) {
     client_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "writableFinished"), v8::Boolean::New(p_isolate, false)).Check();
 
     m_js_object.Reset(p_isolate, client_obj);
+    m_js_object.SetWeak(this, weakDeleteClientRequest, v8::WeakCallbackType::kParameter);
     return handle_scope.Escape(client_obj);
 }
 
 void HTTPClientRequest::write(const v8::FunctionCallbackInfo<v8::Value>& args) {
-    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
-    if (args.Length() > 0) {
+    auto* p_self = unwrapExternalPointer<HTTPClientRequest>(args.This());
+    if (p_self && args.Length() > 0) {
         std::string data;
         if (readBinaryValue(args.GetIsolate(), args[0], &data)) {
             p_self->m_body += data;
@@ -1179,7 +1361,10 @@ void HTTPClientRequest::write(const v8::FunctionCallbackInfo<v8::Value>& args) {
 }
 
 void HTTPClientRequest::end(const v8::FunctionCallbackInfo<v8::Value>& args) {
-    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    auto* p_self = unwrapExternalPointer<HTTPClientRequest>(args.This());
+    if (!p_self) {
+        return;
+    }
     if (args.Length() > 0) {
         std::string data;
         if (readBinaryValue(args.GetIsolate(), args[0], &data)) {
@@ -1190,14 +1375,14 @@ void HTTPClientRequest::end(const v8::FunctionCallbackInfo<v8::Value>& args) {
 }
 
 void HTTPClientRequest::flushHeaders(const v8::FunctionCallbackInfo<v8::Value>& args) {
-    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    auto* p_self = unwrapExternalPointer<HTTPClientRequest>(args.This());
     if (p_self) {
         p_self->execute();
     }
 }
 
 void HTTPClientRequest::setHeader(const v8::FunctionCallbackInfo<v8::Value>& args) {
-    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    auto* p_self = unwrapExternalPointer<HTTPClientRequest>(args.This());
     if (p_self && args.Length() >= 2 && args[0]->IsString() && args[1]->IsString()) {
         v8::String::Utf8Value name(args.GetIsolate(), args[0]);
         v8::String::Utf8Value value(args.GetIsolate(), args[1]);
@@ -1206,7 +1391,7 @@ void HTTPClientRequest::setHeader(const v8::FunctionCallbackInfo<v8::Value>& arg
 }
 
 void HTTPClientRequest::getHeader(const v8::FunctionCallbackInfo<v8::Value>& args) {
-    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    auto* p_self = unwrapExternalPointer<HTTPClientRequest>(args.This());
     if (p_self && args.Length() >= 1 && args[0]->IsString()) {
         v8::String::Utf8Value name(args.GetIsolate(), args[0]);
         std::string value = p_self->getHeader(std::string(*name, name.length()));
@@ -1219,7 +1404,7 @@ void HTTPClientRequest::getHeader(const v8::FunctionCallbackInfo<v8::Value>& arg
 }
 
 void HTTPClientRequest::hasHeader(const v8::FunctionCallbackInfo<v8::Value>& args) {
-    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    auto* p_self = unwrapExternalPointer<HTTPClientRequest>(args.This());
     if (p_self && args.Length() >= 1 && args[0]->IsString()) {
         v8::String::Utf8Value name(args.GetIsolate(), args[0]);
         args.GetReturnValue().Set(v8::Boolean::New(args.GetIsolate(), p_self->hasHeader(std::string(*name, name.length()))));
@@ -1227,7 +1412,7 @@ void HTTPClientRequest::hasHeader(const v8::FunctionCallbackInfo<v8::Value>& arg
 }
 
 void HTTPClientRequest::removeHeader(const v8::FunctionCallbackInfo<v8::Value>& args) {
-    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    auto* p_self = unwrapExternalPointer<HTTPClientRequest>(args.This());
     if (p_self && args.Length() >= 1 && args[0]->IsString()) {
         v8::String::Utf8Value name(args.GetIsolate(), args[0]);
         p_self->removeHeader(std::string(*name, name.length()));
@@ -1235,7 +1420,7 @@ void HTTPClientRequest::removeHeader(const v8::FunctionCallbackInfo<v8::Value>& 
 }
 
 void HTTPClientRequest::getHeaders(const v8::FunctionCallbackInfo<v8::Value>& args) {
-    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    auto* p_self = unwrapExternalPointer<HTTPClientRequest>(args.This());
     if (!p_self) {
         return;
     }
@@ -1251,7 +1436,7 @@ void HTTPClientRequest::getHeaders(const v8::FunctionCallbackInfo<v8::Value>& ar
 }
 
 void HTTPClientRequest::getHeaderNames(const v8::FunctionCallbackInfo<v8::Value>& args) {
-    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    auto* p_self = unwrapExternalPointer<HTTPClientRequest>(args.This());
     if (!p_self) {
         return;
     }
@@ -1266,7 +1451,7 @@ void HTTPClientRequest::getHeaderNames(const v8::FunctionCallbackInfo<v8::Value>
 }
 
 void HTTPClientRequest::getRawHeaderNames(const v8::FunctionCallbackInfo<v8::Value>& args) {
-    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    auto* p_self = unwrapExternalPointer<HTTPClientRequest>(args.This());
     if (!p_self) {
         return;
     }
@@ -1475,6 +1660,7 @@ void HTTPClientRequest::emitEnd() {
     };
     (void)emit_fn->Call(context, res_obj, 1, emit_args);
     m_finished = true;
+    m_request_complete = true;
 
     if (!m_js_object.IsEmpty()) {
         v8::Local<v8::Object> js_obj = m_js_object.Get(p_isolate);
@@ -1486,6 +1672,9 @@ void HTTPClientRequest::emitEnd() {
     m_js_object.Reset();
     m_response_obj.Reset();
     m_response_callback.Reset();
+    if (m_gc_pending) {
+        delete this;
+    }
 }
 
 void HTTP::request(const v8::FunctionCallbackInfo<v8::Value>& args) {
@@ -1522,7 +1711,10 @@ void HTTP::request(const v8::FunctionCallbackInfo<v8::Value>& args) {
         
         size_t colon_pos = host.find(':');
         if (colon_pos != std::string::npos) {
-            port = std::stoi(host.substr(colon_pos + 1));
+            if (!tryParsePort(host.substr(colon_pos + 1), &port)) {
+                p_isolate->ThrowException(v8::Exception::TypeError(v8::String::NewFromUtf8Literal(p_isolate, "Invalid port in URL")));
+                return;
+            }
             host = host.substr(0, colon_pos);
         }
 

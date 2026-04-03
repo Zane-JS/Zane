@@ -199,6 +199,10 @@ void HTTPServer::setRequestHandler(v8::Local<v8::Function> handler) {
     m_request_handler.Reset(p_isolate, handler);
 }
 
+void HTTPServer::setJSObject(v8::Local<v8::Object> obj) {
+    m_server_obj.Reset(p_isolate, obj);
+}
+
 void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Function> callback) {
     if (m_listening) return;
 
@@ -250,6 +254,32 @@ void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Fun
 
                 for (const auto& ev : events) {
                     if (ev.m_type == HTTPRequest::HttpEventType::HEADERS) {
+                        if (!m_server_obj.IsEmpty()) {
+                            v8::Local<v8::Object> server_obj = m_server_obj.Get(p_isolate);
+                            v8::Local<v8::Value> emit_val;
+                            if (server_obj->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "emit")).ToLocal(&emit_val) && emit_val->IsFunction()) {
+                                auto* p_response = new HTTPResponse(p_isolate, p_conn);
+                                v8::Local<v8::Object> res_obj = p_response->toObject();
+                                v8::Local<v8::Value> emit_args[3] = {
+                                    v8::String::NewFromUtf8Literal(p_isolate, "request"),
+                                    req_obj,
+                                    res_obj
+                                };
+                                (void)emit_val.As<v8::Function>()->Call(context, server_obj, 3, emit_args);
+                                if (!m_request_handler.IsEmpty()) {
+                                    v8::Local<v8::Function> handler = m_request_handler.Get(p_isolate);
+                                    v8::Local<v8::Value> argv[2] = { req_obj, res_obj };
+                                    v8::TryCatch try_catch(p_isolate);
+                                    (void)handler->Call(context, context->Global(), 2, argv);
+                                    if (try_catch.HasCaught()) {
+                                        v8::String::Utf8Value error(p_isolate, try_catch.Exception());
+                                        std::cerr << "Error in HTTP handler: " << *error << std::endl;
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+
                         if (!m_request_handler.IsEmpty()) {
                             v8::Local<v8::Function> handler = m_request_handler.Get(p_isolate);
                             auto* p_response = new HTTPResponse(p_isolate, p_conn);
@@ -311,6 +341,18 @@ void HTTPServer::close(v8::Local<v8::Function> callback) {
     if (up_tcp_server) up_tcp_server->stop();
     m_listening = false;
     m_active_servers--;
+    if (!m_server_obj.IsEmpty()) {
+        v8::HandleScope handle_scope(p_isolate);
+        v8::Local<v8::Context> p_context = p_isolate->GetCurrentContext();
+        v8::Local<v8::Object> server_obj = m_server_obj.Get(p_isolate);
+        v8::Local<v8::Value> emit_val;
+        if (server_obj->Get(p_context, v8::String::NewFromUtf8Literal(p_isolate, "emit")).ToLocal(&emit_val) && emit_val->IsFunction()) {
+            v8::Local<v8::Value> emit_args[1] = {
+                v8::String::NewFromUtf8Literal(p_isolate, "close")
+            };
+            (void)emit_val.As<v8::Function>()->Call(p_context, server_obj, 1, emit_args);
+        }
+    }
     if (!callback.IsEmpty()) {
         v8::HandleScope handle_scope(p_isolate);
         v8::Local<v8::Context> p_context = p_isolate->GetCurrentContext();
@@ -739,17 +781,35 @@ v8::Local<v8::ObjectTemplate> HTTP::createTemplate(v8::Isolate* p_isolate) {
 
 void HTTP::createServer(const v8::FunctionCallbackInfo<v8::Value>& args) {
     v8::Isolate* p_isolate = args.GetIsolate();
+    v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
     auto* p_server = new HTTPServer(p_isolate);
+    v8::Local<v8::Function> request_handler;
     if (args.Length() > 0 && args[0]->IsFunction()) {
-        p_server->setRequestHandler(args[0].As<v8::Function>());
+        request_handler = args[0].As<v8::Function>();
+    } else if (args.Length() > 1 && args[1]->IsFunction()) {
+        request_handler = args[1].As<v8::Function>();
     }
+    if (!request_handler.IsEmpty()) {
+        p_server->setRequestHandler(request_handler);
+    }
+
     v8::Local<v8::ObjectTemplate> tmpl = v8::ObjectTemplate::New(p_isolate);
     tmpl->SetInternalFieldCount(1);
     tmpl->Set(p_isolate, "listen", v8::FunctionTemplate::New(p_isolate, serverListen));
     tmpl->Set(p_isolate, "close", v8::FunctionTemplate::New(p_isolate, serverClose));
-    v8::Local<v8::Object> obj = tmpl->NewInstance(p_isolate->GetCurrentContext()).ToLocalChecked();
-    obj->SetInternalField(0, v8::External::New(p_isolate, p_server));
-    args.GetReturnValue().Set(obj);
+    tmpl->SetNativeDataProperty(v8::String::NewFromUtf8Literal(p_isolate, "listening"),
+                                HTTP::serverGetListening,
+                                nullptr);
+
+    v8::Local<v8::FunctionTemplate> ee_tmpl = Events::getEventEmitterTemplate(p_isolate);
+    v8::Local<v8::Function> ee_ctor = ee_tmpl->GetFunction(context).ToLocalChecked();
+    v8::Local<v8::Object> ee_obj = ee_ctor->NewInstance(context).ToLocalChecked();
+
+    v8::Local<v8::Object> server_obj = tmpl->NewInstance(context).ToLocalChecked();
+    server_obj->SetInternalField(0, v8::External::New(p_isolate, p_server));
+    copyObjectProperties(p_isolate, context, ee_obj, server_obj);
+    p_server->setJSObject(server_obj);
+    args.GetReturnValue().Set(server_obj);
 }
 
 void HTTP::serverListen(const v8::FunctionCallbackInfo<v8::Value>& args) {
@@ -952,6 +1012,13 @@ void HTTP::responseGetFinished(v8::Local<v8::Name> property, const v8::PropertyC
     }
 }
 
+void HTTP::serverGetListening(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info) {
+    HTTPServer* p_server = unwrapServer(info.HolderV2());
+    if (p_server) {
+        info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(), p_server->getListening()));
+    }
+}
+
 HTTPServer* HTTP::unwrapServer(v8::Local<v8::Object> obj) {
     if (obj->InternalFieldCount() > 0) return static_cast<HTTPServer*>(obj->GetInternalField(0).As<v8::External>()->Value());
     return nullptr;
@@ -959,6 +1026,11 @@ HTTPServer* HTTP::unwrapServer(v8::Local<v8::Object> obj) {
 
 HTTPResponse* HTTP::unwrapResponse(v8::Local<v8::Object> obj) {
     if (obj->InternalFieldCount() > 0) return static_cast<HTTPResponse*>(obj->GetInternalField(0).As<v8::External>()->Value());
+    return nullptr;
+}
+
+HTTPClientRequest* HTTP::unwrapClientRequest(v8::Local<v8::Object> obj) {
+    if (obj->InternalFieldCount() > 0) return static_cast<HTTPClientRequest*>(obj->GetInternalField(0).As<v8::External>()->Value());
     return nullptr;
 }
 
@@ -971,7 +1043,9 @@ HTTPClientRequest::HTTPClientRequest(v8::Isolate* isolate, const std::string& me
       m_port(port),
       m_path(path),
       m_status_code(0),
-      m_last_header_state(HeaderParseState::NONE) {
+      m_last_header_state(HeaderParseState::NONE),
+      m_finished(false),
+      m_executed(false) {
     if (!callback.IsEmpty()) {
         m_response_callback.Reset(p_isolate, callback);
     }
@@ -984,15 +1058,15 @@ HTTPClientRequest::HTTPClientRequest(v8::Isolate* isolate, const std::string& me
             v8::Local<v8::Value> val = headers->Get(context, key).ToLocalChecked();
             v8::String::Utf8Value key_str(p_isolate, key);
             v8::String::Utf8Value val_str(p_isolate, val);
-            m_headers[normalizeHeaderName(std::string(*key_str, key_str.length()))] = std::string(*val_str, val_str.length());
+            setHeader(std::string(*key_str, key_str.length()), std::string(*val_str, val_str.length()));
         }
     }
 
     if (m_headers.find("host") == m_headers.end()) {
-        m_headers["host"] = m_host;
+        setHeader("Host", m_host);
     }
     if (m_headers.find("connection") == m_headers.end()) {
-        m_headers["connection"] = "close";
+        setHeader("Connection", "close");
     }
 
     llhttp_settings_init(&m_settings);
@@ -1014,6 +1088,51 @@ HTTPClientRequest::~HTTPClientRequest() {
     }
 }
 
+void HTTPClientRequest::setHeader(const std::string& name, const std::string& value) {
+    std::string normalized_name = normalizeHeaderName(name);
+    if (!hasHeader(normalized_name)) {
+        m_raw_header_names.push_back(name);
+    }
+    m_headers[normalized_name] = value;
+}
+
+bool HTTPClientRequest::hasHeader(const std::string& name) const {
+    return m_headers.find(normalizeHeaderName(name)) != m_headers.end();
+}
+
+std::string HTTPClientRequest::getHeader(const std::string& name) const {
+    auto it = m_headers.find(normalizeHeaderName(name));
+    if (it != m_headers.end()) {
+        return it->second;
+    }
+    return "";
+}
+
+void HTTPClientRequest::removeHeader(const std::string& name) {
+    std::string normalized_name = normalizeHeaderName(name);
+    m_headers.erase(normalized_name);
+    for (auto it = m_raw_header_names.begin(); it != m_raw_header_names.end();) {
+        if (normalizeHeaderName(*it) == normalized_name) {
+            it = m_raw_header_names.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+std::vector<std::string> HTTPClientRequest::getHeaderNames() const {
+    std::vector<std::string> names;
+    names.reserve(m_headers.size());
+    for (const auto& pair : m_headers) {
+        names.push_back(pair.first);
+    }
+    return names;
+}
+
+std::vector<std::string> HTTPClientRequest::getRawHeaderNames() const {
+    return m_raw_header_names;
+}
+
 v8::Local<v8::Object> HTTPClientRequest::createObject(v8::Isolate* p_isolate) {
     v8::EscapableHandleScope handle_scope(p_isolate);
     v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
@@ -1022,6 +1141,14 @@ v8::Local<v8::Object> HTTPClientRequest::createObject(v8::Isolate* p_isolate) {
     tmpl->SetInternalFieldCount(1);
     tmpl->Set(p_isolate, "write", v8::FunctionTemplate::New(p_isolate, HTTPClientRequest::write));
     tmpl->Set(p_isolate, "end", v8::FunctionTemplate::New(p_isolate, HTTPClientRequest::end));
+    tmpl->Set(p_isolate, "flushHeaders", v8::FunctionTemplate::New(p_isolate, HTTPClientRequest::flushHeaders));
+    tmpl->Set(p_isolate, "setHeader", v8::FunctionTemplate::New(p_isolate, HTTPClientRequest::setHeader));
+    tmpl->Set(p_isolate, "getHeader", v8::FunctionTemplate::New(p_isolate, HTTPClientRequest::getHeader));
+    tmpl->Set(p_isolate, "hasHeader", v8::FunctionTemplate::New(p_isolate, HTTPClientRequest::hasHeader));
+    tmpl->Set(p_isolate, "removeHeader", v8::FunctionTemplate::New(p_isolate, HTTPClientRequest::removeHeader));
+    tmpl->Set(p_isolate, "getHeaders", v8::FunctionTemplate::New(p_isolate, HTTPClientRequest::getHeaders));
+    tmpl->Set(p_isolate, "getHeaderNames", v8::FunctionTemplate::New(p_isolate, HTTPClientRequest::getHeaderNames));
+    tmpl->Set(p_isolate, "getRawHeaderNames", v8::FunctionTemplate::New(p_isolate, HTTPClientRequest::getRawHeaderNames));
     
     v8::Local<v8::FunctionTemplate> ee_tmpl = Events::getEventEmitterTemplate(p_isolate);
     v8::Local<v8::Function> ee_ctor = ee_tmpl->GetFunction(context).ToLocalChecked();
@@ -1029,6 +1156,13 @@ v8::Local<v8::Object> HTTPClientRequest::createObject(v8::Isolate* p_isolate) {
     v8::Local<v8::Object> client_obj = tmpl->NewInstance(context).ToLocalChecked();
     client_obj->SetInternalField(0, v8::External::New(p_isolate, this));
     copyObjectProperties(p_isolate, context, obj, client_obj);
+    client_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "method"), v8::String::NewFromUtf8(p_isolate, m_method.c_str()).ToLocalChecked()).Check();
+    client_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "path"), v8::String::NewFromUtf8(p_isolate, m_path.c_str()).ToLocalChecked()).Check();
+    client_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "host"), v8::String::NewFromUtf8(p_isolate, m_host.c_str()).ToLocalChecked()).Check();
+    client_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "protocol"), v8::String::NewFromUtf8Literal(p_isolate, "http:")).Check();
+    client_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "finished"), v8::Boolean::New(p_isolate, false)).Check();
+    client_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "writableEnded"), v8::Boolean::New(p_isolate, false)).Check();
+    client_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "writableFinished"), v8::Boolean::New(p_isolate, false)).Check();
 
     m_js_object.Reset(p_isolate, client_obj);
     return handle_scope.Escape(client_obj);
@@ -1055,7 +1189,103 @@ void HTTPClientRequest::end(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_self->execute();
 }
 
+void HTTPClientRequest::flushHeaders(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    if (p_self) {
+        p_self->execute();
+    }
+}
+
+void HTTPClientRequest::setHeader(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    if (p_self && args.Length() >= 2 && args[0]->IsString() && args[1]->IsString()) {
+        v8::String::Utf8Value name(args.GetIsolate(), args[0]);
+        v8::String::Utf8Value value(args.GetIsolate(), args[1]);
+        p_self->setHeader(std::string(*name, name.length()), std::string(*value, value.length()));
+    }
+}
+
+void HTTPClientRequest::getHeader(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    if (p_self && args.Length() >= 1 && args[0]->IsString()) {
+        v8::String::Utf8Value name(args.GetIsolate(), args[0]);
+        std::string value = p_self->getHeader(std::string(*name, name.length()));
+        if (!value.empty()) {
+            args.GetReturnValue().Set(v8::String::NewFromUtf8(args.GetIsolate(), value.c_str()).ToLocalChecked());
+        } else {
+            args.GetReturnValue().SetNull();
+        }
+    }
+}
+
+void HTTPClientRequest::hasHeader(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    if (p_self && args.Length() >= 1 && args[0]->IsString()) {
+        v8::String::Utf8Value name(args.GetIsolate(), args[0]);
+        args.GetReturnValue().Set(v8::Boolean::New(args.GetIsolate(), p_self->hasHeader(std::string(*name, name.length()))));
+    }
+}
+
+void HTTPClientRequest::removeHeader(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    if (p_self && args.Length() >= 1 && args[0]->IsString()) {
+        v8::String::Utf8Value name(args.GetIsolate(), args[0]);
+        p_self->removeHeader(std::string(*name, name.length()));
+    }
+}
+
+void HTTPClientRequest::getHeaders(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    if (!p_self) {
+        return;
+    }
+
+    v8::Local<v8::Object> headers = v8::Object::New(args.GetIsolate());
+    v8::Local<v8::Context> context = args.GetIsolate()->GetCurrentContext();
+    for (const auto& pair : p_self->getHeaders()) {
+        headers->Set(context,
+                     v8::String::NewFromUtf8(args.GetIsolate(), pair.first.c_str()).ToLocalChecked(),
+                     v8::String::NewFromUtf8(args.GetIsolate(), pair.second.c_str()).ToLocalChecked()).Check();
+    }
+    args.GetReturnValue().Set(headers);
+}
+
+void HTTPClientRequest::getHeaderNames(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    if (!p_self) {
+        return;
+    }
+
+    std::vector<std::string> names = p_self->getHeaderNames();
+    v8::Local<v8::Array> result = v8::Array::New(args.GetIsolate(), names.size());
+    v8::Local<v8::Context> context = args.GetIsolate()->GetCurrentContext();
+    for (uint32_t i = 0; i < names.size(); i++) {
+        result->Set(context, i, v8::String::NewFromUtf8(args.GetIsolate(), names[i].c_str()).ToLocalChecked()).Check();
+    }
+    args.GetReturnValue().Set(result);
+}
+
+void HTTPClientRequest::getRawHeaderNames(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    if (!p_self) {
+        return;
+    }
+
+    std::vector<std::string> names = p_self->getRawHeaderNames();
+    v8::Local<v8::Array> result = v8::Array::New(args.GetIsolate(), names.size());
+    v8::Local<v8::Context> context = args.GetIsolate()->GetCurrentContext();
+    for (uint32_t i = 0; i < names.size(); i++) {
+        result->Set(context, i, v8::String::NewFromUtf8(args.GetIsolate(), names[i].c_str()).ToLocalChecked()).Check();
+    }
+    args.GetReturnValue().Set(result);
+}
+
 void HTTPClientRequest::execute() {
+    if (m_executed) {
+        return;
+    }
+    m_executed = true;
+
     up_loop_thread = std::make_unique<trantor::EventLoopThread>();
     up_loop_thread->run();
     trantor::EventLoop* p_loop = up_loop_thread->getLoop();
@@ -1244,6 +1474,14 @@ void HTTPClientRequest::emitEnd() {
         v8::String::NewFromUtf8Literal(p_isolate, "end")
     };
     (void)emit_fn->Call(context, res_obj, 1, emit_args);
+    m_finished = true;
+
+    if (!m_js_object.IsEmpty()) {
+        v8::Local<v8::Object> js_obj = m_js_object.Get(p_isolate);
+        js_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "finished"), v8::Boolean::New(p_isolate, true)).Check();
+        js_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "writableEnded"), v8::Boolean::New(p_isolate, true)).Check();
+        js_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "writableFinished"), v8::Boolean::New(p_isolate, true)).Check();
+    }
     
     m_js_object.Reset();
     m_response_obj.Reset();

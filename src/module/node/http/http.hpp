@@ -35,14 +35,17 @@ public:
     void listen(int32_t port, const std::string& host, v8::Local<v8::Function> callback);
     void close(v8::Local<v8::Function> callback);
     void setRequestHandler(v8::Local<v8::Function> handler);
-    
+    void setJSObject(v8::Local<v8::Object> obj);
+     
     v8::Isolate* getIsolate() { return p_isolate; }
-    
+    bool getListening() const { return m_listening; }
+     
     static bool hasActiveServers() { return m_active_servers > 0; }
-    
+     
 private:
     static std::atomic<int32_t> m_active_servers;
     v8::Isolate* p_isolate;
+    v8::Global<v8::Object> m_server_obj;
     v8::Global<v8::Function> m_request_handler;
     
     bool m_listening;
@@ -173,12 +176,29 @@ public:
     void emitResponse();
     void emitData(const std::string& data);
     void emitEnd();
+    void setHeader(const std::string& name, const std::string& value);
+    bool hasHeader(const std::string& name) const;
+    std::string getHeader(const std::string& name) const;
+    void removeHeader(const std::string& name);
+    std::vector<std::string> getHeaderNames() const;
+    std::vector<std::string> getRawHeaderNames() const;
+    const std::map<std::string, std::string>& getHeaders() const { return m_headers; }
+    bool getFinished() const { return m_finished; }
+    bool getExecuted() const { return m_executed; }
     void appendResponseHeaderField(const char* p_data, size_t length);
     void appendResponseHeaderValue(const char* p_data, size_t length);
     void finishPendingResponseHeader();
 
     static void write(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void end(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void flushHeaders(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void setHeader(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void getHeader(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void hasHeader(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void removeHeader(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void getHeaders(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void getHeaderNames(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void getRawHeaderNames(const v8::FunctionCallbackInfo<v8::Value>& args);
 
     static int32_t onMessageBegin(llhttp_t* p_parser);
     static int32_t onStatus(llhttp_t* p_parser, const char* p_at, size_t length);
@@ -202,6 +222,7 @@ private:
     std::string m_path;
     std::string m_body;
     std::map<std::string, std::string> m_headers;
+    std::vector<std::string> m_raw_header_names;
 
     int32_t m_status_code;
     std::string m_status_message;
@@ -214,6 +235,8 @@ private:
     llhttp_settings_t m_settings;
     std::shared_ptr<trantor::TcpClient> sp_tcp_client;
     std::unique_ptr<trantor::EventLoopThread> up_loop_thread;
+    bool m_finished;
+    bool m_executed;
 
     v8::Global<v8::Object> m_js_object;
     v8::Global<v8::Object> m_response_obj;
@@ -248,6 +271,7 @@ public:
     static void responseSetStatusMessage(v8::Local<v8::Name> property, v8::Local<v8::Value> value, const v8::PropertyCallbackInfo<void>& info);
     static void responseGetHeadersSent(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
     static void responseGetFinished(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
+    static void serverGetListening(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
      
     static void getMethods(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
     static void getStatusCodes(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
@@ -255,6 +279,7 @@ public:
 private:
     static HTTPServer* unwrapServer(v8::Local<v8::Object> obj);
     static HTTPResponse* unwrapResponse(v8::Local<v8::Object> obj);
+    static HTTPClientRequest* unwrapClientRequest(v8::Local<v8::Object> obj);
 };
 
 } // namespace module

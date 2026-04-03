@@ -5,7 +5,9 @@
 #include <thread>
 #include <mutex>
 #include <memory>
+#include <cstring>
 #include <trantor/net/InetAddress.h>
+#include <trantor/net/TcpClient.h>
 #include <atomic>
 
 #include "../events/events.hpp"
@@ -16,36 +18,150 @@ namespace module {
 
 std::atomic<int32_t> HTTPServer::m_active_servers{0};
 
+namespace {
+
+std::string normalizeHeaderName(const std::string& name) {
+    std::string normalized = name;
+    for (char& c : normalized) {
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c + ('a' - 'A'));
+        }
+    }
+    return normalized;
+}
+
+bool shouldDiscardDuplicateHeader(const std::string& name) {
+    return name == "age" ||
+           name == "authorization" ||
+           name == "content-length" ||
+           name == "content-type" ||
+           name == "etag" ||
+           name == "expires" ||
+           name == "from" ||
+           name == "host" ||
+           name == "if-modified-since" ||
+           name == "if-unmodified-since" ||
+           name == "last-modified" ||
+           name == "location" ||
+           name == "max-forwards" ||
+           name == "proxy-authorization" ||
+           name == "referer" ||
+           name == "retry-after" ||
+           name == "server" ||
+           name == "user-agent";
+}
+
+std::string getDefaultStatusMessage(int32_t status_code) {
+    switch (status_code) {
+    case 100:
+        return "Continue";
+    case 101:
+        return "Switching Protocols";
+    case 200:
+        return "OK";
+    case 201:
+        return "Created";
+    case 204:
+        return "No Content";
+    case 301:
+        return "Moved Permanently";
+    case 302:
+        return "Found";
+    case 304:
+        return "Not Modified";
+    case 400:
+        return "Bad Request";
+    case 401:
+        return "Unauthorized";
+    case 403:
+        return "Forbidden";
+    case 404:
+        return "Not Found";
+    case 405:
+        return "Method Not Allowed";
+    case 408:
+        return "Request Timeout";
+    case 409:
+        return "Conflict";
+    case 413:
+        return "Payload Too Large";
+    case 429:
+        return "Too Many Requests";
+    case 500:
+        return "Internal Server Error";
+    case 501:
+        return "Not Implemented";
+    case 502:
+        return "Bad Gateway";
+    case 503:
+        return "Service Unavailable";
+    case 504:
+        return "Gateway Timeout";
+    default:
+        return "OK";
+    }
+}
+
+bool readBinaryValue(v8::Isolate* p_isolate, v8::Local<v8::Value> value, std::string* p_output) {
+    if (value->IsString()) {
+        v8::String::Utf8Value utf8_value(p_isolate, value);
+        p_output->assign(*utf8_value, utf8_value.length());
+        return true;
+    }
+
+    if (value->IsUint8Array()) {
+        v8::Local<v8::Uint8Array> ui8 = value.As<v8::Uint8Array>();
+        const uint8_t* p_data = static_cast<const uint8_t*>(ui8->Buffer()->GetBackingStore()->Data()) + ui8->ByteOffset();
+        p_output->assign(reinterpret_cast<const char*>(p_data), ui8->ByteLength());
+        return true;
+    }
+
+    return false;
+}
+
+v8::Local<v8::Value> createBufferValue(v8::Isolate* p_isolate, const std::string& data) {
+    v8::Local<v8::Uint8Array> buffer = z8::module::Buffer::createBuffer(p_isolate, data.size());
+    if (!data.empty()) {
+        std::memcpy(buffer->Buffer()->GetBackingStore()->Data(), data.data(), data.size());
+    }
+    return buffer;
+}
+
+void copyObjectProperties(v8::Isolate* p_isolate,
+                          v8::Local<v8::Context> context,
+                          v8::Local<v8::Object> source,
+                          v8::Local<v8::Object> target) {
+    v8::Local<v8::Array> prop_names = source->GetPropertyNames(context).ToLocalChecked();
+    for (uint32_t i = 0; i < prop_names->Length(); i++) {
+        v8::Local<v8::Value> key = prop_names->Get(context, i).ToLocalChecked();
+        target->Set(context, key, source->Get(context, key).ToLocalChecked()).Check();
+    }
+}
+
+} // namespace
+
 // llhttp callbacks (to bridge with HTTPRequest)
 static int32_t on_url(llhttp_t* p_parser, const char* p_at, size_t length) {
     auto* p_request = static_cast<HTTPRequest*>(p_parser->data);
-    p_request->setUrl(std::string(p_at, length));
+    p_request->appendUrl(p_at, length);
     return 0;
 }
 
 static int32_t on_header_field(llhttp_t* p_parser, const char* p_at, size_t length) {
     auto* p_request = static_cast<HTTPRequest*>(p_parser->data);
-    if (!p_request->m_current_header_field.empty() && !p_request->m_current_header_value.empty()) {
-        p_request->addHeader(p_request->m_current_header_field, p_request->m_current_header_value);
-        p_request->m_current_header_value.clear();
-    }
-    p_request->m_current_header_field = std::string(p_at, length);
+    p_request->appendHeaderField(p_at, length);
     return 0;
 }
 
 static int32_t on_header_value(llhttp_t* p_parser, const char* p_at, size_t length) {
     auto* p_request = static_cast<HTTPRequest*>(p_parser->data);
-    p_request->m_current_header_value = std::string(p_at, length);
+    p_request->appendHeaderValue(p_at, length);
     return 0;
 }
 
 static int32_t on_headers_complete(llhttp_t* p_parser) {
     auto* p_request = static_cast<HTTPRequest*>(p_parser->data);
-    if (!p_request->m_current_header_field.empty() && !p_request->m_current_header_value.empty()) {
-        p_request->addHeader(p_request->m_current_header_field, p_request->m_current_header_value);
-        p_request->m_current_header_field.clear();
-        p_request->m_current_header_value.clear();
-    }
+    p_request->finishPendingHeader();
     const char* p_method_name = llhttp_method_name(static_cast<llhttp_method_t>(llhttp_get_method(p_parser)));
     p_request->setMethod(p_method_name);
     p_request->m_http_major = p_parser->http_major;
@@ -150,17 +266,9 @@ void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Fun
                             }
                         }
                     } else if (ev.m_type == HTTPRequest::HttpEventType::BODY_CHUNK) {
-                        v8::Local<v8::Value> chunk = z8::module::Buffer::createBuffer(p_isolate, ev.m_data.length());
-                        // Copy data into buffer... wait, createBuffer returns Uint8Array. 
-                        // Instead, we will instantiate a new Buffer object from memory
-                        v8::Local<v8::ArrayBuffer> ab = v8::ArrayBuffer::New(p_isolate, ev.m_data.length());
-                        std::memcpy(ab->Data(), ev.m_data.data(), ev.m_data.length());
-                        // Just use Uint8Array for chunk right now to keep it simple, it's compatible
-                        v8::Local<v8::Uint8Array> ui8 = v8::Uint8Array::New(ab, 0, ev.m_data.length());
-                        
                         v8::Local<v8::Value> emit_args[2] = {
                             v8::String::NewFromUtf8Literal(p_isolate, "data"),
-                            ui8
+                            createBufferValue(p_isolate, ev.m_data)
                         };
                         (void)emit_fn->Call(context, req_obj, 2, emit_args);
                     } else if (ev.m_type == HTTPRequest::HttpEventType::MESSAGE_COMPLETE) {
@@ -212,7 +320,11 @@ void HTTPServer::close(v8::Local<v8::Function> callback) {
 
 // HTTPRequest Implementation
 HTTPRequest::HTTPRequest(v8::Isolate* p_isolate) 
-    : p_isolate(p_isolate), m_parsing_complete(false) {
+    : p_isolate(p_isolate),
+      m_parsing_complete(false),
+      m_http_major(1),
+      m_http_minor(1),
+      m_last_header_state(HeaderParseState::NONE) {
     llhttp_settings_init(&m_settings);
     m_settings.on_url = on_url;
     m_settings.on_header_field = on_header_field;
@@ -232,6 +344,32 @@ llhttp_errno_t HTTPRequest::parse(const char* p_data, size_t length) {
     return llhttp_execute(&m_parser, p_data, length);
 }
 
+void HTTPRequest::appendUrl(const char* p_data, size_t length) {
+    m_url.append(p_data, length);
+}
+
+void HTTPRequest::appendHeaderField(const char* p_data, size_t length) {
+    if (m_last_header_state == HeaderParseState::VALUE) {
+        finishPendingHeader();
+    }
+    m_current_header_field.append(p_data, length);
+    m_last_header_state = HeaderParseState::FIELD;
+}
+
+void HTTPRequest::appendHeaderValue(const char* p_data, size_t length) {
+    m_current_header_value.append(p_data, length);
+    m_last_header_state = HeaderParseState::VALUE;
+}
+
+void HTTPRequest::finishPendingHeader() {
+    if (!m_current_header_field.empty()) {
+        addHeader(m_current_header_field, m_current_header_value);
+    }
+    m_current_header_field.clear();
+    m_current_header_value.clear();
+    m_last_header_state = HeaderParseState::NONE;
+}
+
 void HTTPRequest::pushEvent(HttpEventType type, const std::string& data) {
     std::lock_guard<std::mutex> lock(m_events_mutex);
     m_pending_events.push_back({type, data});
@@ -245,9 +383,9 @@ std::vector<HTTPRequest::HttpEvent> HTTPRequest::popEvents() {
 }
 
 void HTTPRequest::addHeader(const std::string& name, const std::string& value) {
-    m_headers[name] = value;
     m_raw_headers.push_back(name);
     m_raw_headers.push_back(value);
+    m_header_values[normalizeHeaderName(name)].push_back(value);
 }
 
 void HTTPRequest::setJSObject(v8::Local<v8::Object> obj) {
@@ -286,6 +424,7 @@ v8::Local<v8::Object> HTTPRequest::toObject() {
              v8::String::NewFromUtf8(p_isolate, m_url.c_str()).ToLocalChecked()).Check();
     
     v8::Local<v8::Object> headers = v8::Object::New(p_isolate);
+    v8::Local<v8::Object> headers_distinct = v8::Object::New(p_isolate);
     v8::Local<v8::Array> raw_headers = v8::Array::New(p_isolate, m_raw_headers.size());
     
     for (size_t i = 0; i < m_raw_headers.size(); i += 2) {
@@ -296,17 +435,56 @@ v8::Local<v8::Object> HTTPRequest::toObject() {
         raw_headers->Set(p_context, i, v8::String::NewFromUtf8(p_isolate, name.c_str()).ToLocalChecked()).Check();
         raw_headers->Set(p_context, i+1, v8::String::NewFromUtf8(p_isolate, value.c_str()).ToLocalChecked()).Check();
         
-        // Lowercase header names for 'headers' object
-        std::string lower_name = name;
-        for (auto& c : lower_name) {
-            if (c >= 'A' && c <= 'Z') c += 32;
+    }
+
+    for (const auto& pair : m_header_values) {
+        const std::string& name = pair.first;
+        const std::vector<std::string>& values = pair.second;
+        v8::Local<v8::Array> distinct_values = v8::Array::New(p_isolate, values.size());
+
+        for (uint32_t i = 0; i < values.size(); i++) {
+            distinct_values->Set(
+                p_context,
+                i,
+                v8::String::NewFromUtf8(p_isolate, values[i].c_str()).ToLocalChecked()).Check();
         }
-        headers->Set(p_context,
-                    v8::String::NewFromUtf8(p_isolate, lower_name.c_str()).ToLocalChecked(),
-                    v8::String::NewFromUtf8(p_isolate, value.c_str()).ToLocalChecked()).Check();
+
+        headers_distinct->Set(
+            p_context,
+            v8::String::NewFromUtf8(p_isolate, name.c_str()).ToLocalChecked(),
+            distinct_values).Check();
+
+        if (values.empty()) {
+            continue;
+        }
+
+        v8::Local<v8::Value> header_value;
+        if (name == "set-cookie") {
+            header_value = distinct_values;
+        } else {
+            std::ostringstream value_builder;
+            if (shouldDiscardDuplicateHeader(name)) {
+                value_builder << values.front();
+            } else {
+                const char* p_separator = (name == "cookie") ? "; " : ", ";
+                for (size_t i = 0; i < values.size(); i++) {
+                    if (i > 0) {
+                        value_builder << p_separator;
+                    }
+                    value_builder << values[i];
+                }
+            }
+            header_value = v8::String::NewFromUtf8(p_isolate, value_builder.str().c_str()).ToLocalChecked();
+        }
+
+        headers->Set(
+            p_context,
+            v8::String::NewFromUtf8(p_isolate, name.c_str()).ToLocalChecked(),
+            header_value).Check();
     }
     
     obj->Set(p_context, v8::String::NewFromUtf8Literal(p_isolate, "headers"), headers).Check();
+    obj->Set(p_context, v8::String::NewFromUtf8Literal(p_isolate, "headersDistinct"), headers_distinct).Check();
     obj->Set(p_context, v8::String::NewFromUtf8Literal(p_isolate, "rawHeaders"), raw_headers).Check();
     
     return handle_scope.Escape(obj);
@@ -315,20 +493,36 @@ v8::Local<v8::Object> HTTPRequest::toObject() {
 // HTTPResponse Implementation
 HTTPResponse::HTTPResponse(v8::Isolate* p_isolate, const trantor::TcpConnectionPtr& p_conn)
     : p_isolate(p_isolate), m_conn(p_conn), m_status_code(200),
-      m_headers_sent(false), m_finished(false) {}
+      m_headers_sent(false), m_finished(false), m_use_chunked_encoding(false) {}
 
 v8::Local<v8::Object> HTTPResponse::toObject() {
     v8::EscapableHandleScope handle_scope(p_isolate);
     v8::Local<v8::Context> p_context = p_isolate->GetCurrentContext();
+
+    if (!m_res_obj.IsEmpty()) {
+        return handle_scope.Escape(m_res_obj.Get(p_isolate));
+    }
+
     v8::Local<v8::ObjectTemplate> tmpl = v8::ObjectTemplate::New(p_isolate);
     tmpl->SetInternalFieldCount(1);
     
-    // Properties
     tmpl->SetNativeDataProperty(v8::String::NewFromUtf8Literal(p_isolate, "statusCode"), 
-                      HTTP::responseGetStatusCode, HTTP::responseSetStatusCode);
+                                HTTP::responseGetStatusCode, HTTP::responseSetStatusCode);
     tmpl->SetNativeDataProperty(v8::String::NewFromUtf8Literal(p_isolate, "statusMessage"), 
-                      HTTP::responseGetStatusMessage, HTTP::responseSetStatusMessage);
-                      
+                                HTTP::responseGetStatusMessage, HTTP::responseSetStatusMessage);
+    tmpl->SetNativeDataProperty(v8::String::NewFromUtf8Literal(p_isolate, "headersSent"),
+                                HTTP::responseGetHeadersSent,
+                                nullptr);
+    tmpl->SetNativeDataProperty(v8::String::NewFromUtf8Literal(p_isolate, "finished"),
+                                HTTP::responseGetFinished,
+                                nullptr);
+    tmpl->SetNativeDataProperty(v8::String::NewFromUtf8Literal(p_isolate, "writableEnded"),
+                                HTTP::responseGetFinished,
+                                nullptr);
+    tmpl->SetNativeDataProperty(v8::String::NewFromUtf8Literal(p_isolate, "writableFinished"),
+                                HTTP::responseGetFinished,
+                                nullptr);
+                       
     tmpl->Set(p_isolate, "writeHead", v8::FunctionTemplate::New(p_isolate, HTTP::responseWriteHead));
     tmpl->Set(p_isolate, "setHeader", v8::FunctionTemplate::New(p_isolate, HTTP::responseSetHeader));
     tmpl->Set(p_isolate, "getHeader", v8::FunctionTemplate::New(p_isolate, HTTP::responseGetHeader));
@@ -338,9 +532,17 @@ v8::Local<v8::Object> HTTPResponse::toObject() {
     tmpl->Set(p_isolate, "getHeaders", v8::FunctionTemplate::New(p_isolate, HTTP::responseGetHeaders));
     tmpl->Set(p_isolate, "write", v8::FunctionTemplate::New(p_isolate, HTTP::responseWrite));
     tmpl->Set(p_isolate, "end", v8::FunctionTemplate::New(p_isolate, HTTP::responseEnd));
-    v8::Local<v8::Object> obj = tmpl->NewInstance(p_context).ToLocalChecked();
-    obj->SetInternalField(0, v8::External::New(p_isolate, this));
-    return handle_scope.Escape(obj);
+
+    v8::Local<v8::FunctionTemplate> ee_tmpl = Events::getEventEmitterTemplate(p_isolate);
+    v8::Local<v8::Function> ee_ctor = ee_tmpl->GetFunction(p_context).ToLocalChecked();
+    v8::Local<v8::Object> ee_obj = ee_ctor->NewInstance(p_context).ToLocalChecked();
+
+    v8::Local<v8::Object> res_obj = tmpl->NewInstance(p_context).ToLocalChecked();
+    res_obj->SetInternalField(0, v8::External::New(p_isolate, this));
+    copyObjectProperties(p_isolate, p_context, ee_obj, res_obj);
+
+    m_res_obj.Reset(p_isolate, res_obj);
+    return handle_scope.Escape(res_obj);
 }
 
 void HTTPResponse::writeHead(int32_t status_code, v8::Local<v8::Object> headers) {
@@ -348,7 +550,9 @@ void HTTPResponse::writeHead(int32_t status_code, v8::Local<v8::Object> headers)
 }
 
 void HTTPResponse::writeHead(int32_t status_code, const std::string& status_message, v8::Local<v8::Object> headers) {
-    if (m_headers_sent) return;
+    if (m_headers_sent) {
+        return;
+    }
     m_status_code = status_code;
     if (!status_message.empty()) {
         m_status_message = status_message;
@@ -361,23 +565,33 @@ void HTTPResponse::writeHead(int32_t status_code, const std::string& status_mess
             v8::Local<v8::Value> val = headers->Get(p_context, key).ToLocalChecked();
             v8::String::Utf8Value key_str(p_isolate, key);
             v8::String::Utf8Value val_str(p_isolate, val);
-            m_headers[*key_str] = *val_str;
+            m_headers[normalizeHeaderName(std::string(*key_str, key_str.length()))] = std::string(*val_str, val_str.length());
         }
     }
+
+    if (!hasHeader("content-length") && !hasHeader("transfer-encoding")) {
+        m_headers["transfer-encoding"] = "chunked";
+        m_use_chunked_encoding = true;
+    } else if (getHeader("transfer-encoding") == "chunked") {
+        m_use_chunked_encoding = true;
+    }
+
     sendHeaders();
 }
 
 void HTTPResponse::setHeader(const std::string& name, const std::string& value) {
-    if (m_headers_sent) return;
-    m_headers[name] = value;
+    if (m_headers_sent) {
+        return;
+    }
+    m_headers[normalizeHeaderName(name)] = value;
 }
 
 bool HTTPResponse::hasHeader(const std::string& name) {
-    return m_headers.find(name) != m_headers.end();
+    return m_headers.find(normalizeHeaderName(name)) != m_headers.end();
 }
 
 std::string HTTPResponse::getHeader(const std::string& name) {
-    auto it = m_headers.find(name);
+    auto it = m_headers.find(normalizeHeaderName(name));
     if (it != m_headers.end()) {
         return it->second;
     }
@@ -385,8 +599,10 @@ std::string HTTPResponse::getHeader(const std::string& name) {
 }
 
 void HTTPResponse::removeHeader(const std::string& name) {
-    if (m_headers_sent) return;
-    m_headers.erase(name);
+    if (m_headers_sent) {
+        return;
+    }
+    m_headers.erase(normalizeHeaderName(name));
 }
 
 v8::Local<v8::Array> HTTPResponse::getHeaderNames() {
@@ -413,31 +629,64 @@ v8::Local<v8::Object> HTTPResponse::getHeaders() {
 }
 
 void HTTPResponse::write(const std::string& data) {
-    if (!m_headers_sent) sendHeaders();
-    if (m_finished) return;
-    m_conn->send(data);
+    if (m_finished || data.empty()) {
+        return;
+    }
+
+    if (!m_headers_sent) {
+        if (!hasHeader("content-length") && !hasHeader("transfer-encoding")) {
+            m_headers["transfer-encoding"] = "chunked";
+            m_use_chunked_encoding = true;
+        } else if (getHeader("transfer-encoding") == "chunked") {
+            m_use_chunked_encoding = true;
+        }
+        sendHeaders();
+    }
+
+    if (m_use_chunked_encoding) {
+        sendChunk(data);
+    } else {
+        m_conn->send(data);
+    }
 }
 
 void HTTPResponse::end(const std::string& data) {
-    if (m_finished) return;
-    if (!m_headers_sent) sendHeaders();
-    if (!data.empty()) m_conn->send(data);
+    if (m_finished) {
+        return;
+    }
+
+    if (!m_headers_sent) {
+        if (!hasHeader("content-length") && !hasHeader("transfer-encoding")) {
+            m_headers["content-length"] = std::to_string(data.size());
+        } else if (getHeader("transfer-encoding") == "chunked") {
+            m_use_chunked_encoding = true;
+        }
+        sendHeaders();
+    }
+
+    if (!data.empty()) {
+        if (m_use_chunked_encoding) {
+            sendChunk(data);
+        } else {
+            m_conn->send(data);
+        }
+    }
+
+    if (m_use_chunked_encoding) {
+        m_conn->send("0\r\n\r\n");
+    }
+
     m_finished = true;
+    emit("finish");
 }
 
 void HTTPResponse::sendHeaders() {
-    if (m_headers_sent) return;
-    std::ostringstream ss;
-    std::string msg = m_status_message.empty() ? "OK" : m_status_message;
-    if (m_status_message.empty()) {
-        if (m_status_code == 404) msg = "Not Found";
-        else if (m_status_code == 500) msg = "Internal Server Error";
-        else if (m_status_code == 201) msg = "Created";
-        else if (m_status_code == 204) msg = "No Content";
-        else if (m_status_code == 400) msg = "Bad Request";
-        else if (m_status_code == 401) msg = "Unauthorized";
-        else if (m_status_code == 403) msg = "Forbidden";
+    if (m_headers_sent) {
+        return;
     }
+
+    std::ostringstream ss;
+    std::string msg = m_status_message.empty() ? getDefaultStatusMessage(m_status_code) : m_status_message;
     ss << "HTTP/1.1 " << m_status_code << " " << msg << "\r\n";
     for (const auto& pair : m_headers) {
         ss << pair.first << ": " << pair.second << "\r\n";
@@ -447,12 +696,44 @@ void HTTPResponse::sendHeaders() {
     m_headers_sent = true;
 }
 
+void HTTPResponse::sendChunk(const std::string& data) {
+    if (data.empty()) {
+        return;
+    }
+
+    std::ostringstream chunk;
+    chunk << std::hex << data.size() << "\r\n";
+    chunk << data << "\r\n";
+    m_conn->send(chunk.str());
+}
+
+void HTTPResponse::emit(const char* p_event_name) {
+    if (m_res_obj.IsEmpty()) {
+        return;
+    }
+
+    v8::HandleScope handle_scope(p_isolate);
+    v8::Local<v8::Context> p_context = p_isolate->GetCurrentContext();
+    v8::Local<v8::Object> res_obj = m_res_obj.Get(p_isolate);
+    v8::Local<v8::Value> emit_val;
+    if (!res_obj->Get(p_context, v8::String::NewFromUtf8Literal(p_isolate, "emit")).ToLocal(&emit_val) || !emit_val->IsFunction()) {
+        return;
+    }
+
+    v8::Local<v8::Value> emit_args[1] = {
+        v8::String::NewFromUtf8(p_isolate, p_event_name).ToLocalChecked()
+    };
+    (void)emit_val.As<v8::Function>()->Call(p_context, res_obj, 1, emit_args);
+}
+
 // HTTP Module Template
 v8::Local<v8::ObjectTemplate> HTTP::createTemplate(v8::Isolate* p_isolate) {
     v8::Local<v8::ObjectTemplate> tmpl = v8::ObjectTemplate::New(p_isolate);
     tmpl->Set(p_isolate, "createServer", v8::FunctionTemplate::New(p_isolate, createServer));
     tmpl->SetNativeDataProperty(v8::String::NewFromUtf8Literal(p_isolate, "METHODS"), getMethods);
     tmpl->SetNativeDataProperty(v8::String::NewFromUtf8Literal(p_isolate, "STATUS_CODES"), getStatusCodes);
+    tmpl->Set(p_isolate, "request", v8::FunctionTemplate::New(p_isolate, request));
+    tmpl->Set(p_isolate, "get", v8::FunctionTemplate::New(p_isolate, get));
     return tmpl;
 }
 
@@ -499,10 +780,26 @@ void HTTP::responseWriteHead(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto* p_response = unwrapResponse(args.This());
     if (p_response) {
         int32_t status = 200;
+        std::string status_message;
         v8::Local<v8::Object> headers;
-        if (args.Length() > 0 && args[0]->IsNumber()) status = args[0]->Int32Value(args.GetIsolate()->GetCurrentContext()).ToChecked();
-        if (args.Length() > 1 && args[1]->IsObject()) headers = args[1].As<v8::Object>();
-        p_response->writeHead(status, headers);
+        if (args.Length() > 0 && args[0]->IsNumber()) {
+            status = args[0]->Int32Value(args.GetIsolate()->GetCurrentContext()).ToChecked();
+        }
+        if (args.Length() > 1 && args[1]->IsString()) {
+            v8::String::Utf8Value status_message_value(args.GetIsolate(), args[1]);
+            status_message = std::string(*status_message_value, status_message_value.length());
+        } else if (args.Length() > 1 && args[1]->IsObject()) {
+            headers = args[1].As<v8::Object>();
+        }
+        if (args.Length() > 2 && args[2]->IsObject()) {
+            headers = args[2].As<v8::Object>();
+        }
+
+        if (status_message.empty()) {
+            p_response->writeHead(status, headers);
+        } else {
+            p_response->writeHead(status, status_message, headers);
+        }
     }
 }
 
@@ -564,9 +861,11 @@ void HTTP::responseGetHeaders(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
 void HTTP::responseWrite(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto* p_response = unwrapResponse(args.This());
-    if (p_response && args.Length() > 0 && args[0]->IsString()) {
-        v8::String::Utf8Value val(args.GetIsolate(), args[0]);
-        p_response->write(std::string(*val, val.length()));
+    if (p_response && args.Length() > 0) {
+        std::string data;
+        if (readBinaryValue(args.GetIsolate(), args[0], &data)) {
+            p_response->write(data);
+        }
     }
 }
 
@@ -574,9 +873,8 @@ void HTTP::responseEnd(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto* p_response = unwrapResponse(args.This());
     if (p_response) {
         std::string data;
-        if (args.Length() > 0 && args[0]->IsString()) {
-            v8::String::Utf8Value val(args.GetIsolate(), args[0]);
-            data = std::string(*val, val.length());
+        if (args.Length() > 0) {
+            (void)readBinaryValue(args.GetIsolate(), args[0], &data);
         }
         p_response->end(data);
     }
@@ -593,7 +891,16 @@ void HTTP::getMethods(v8::Local<v8::Name> property, const v8::PropertyCallbackIn
 void HTTP::getStatusCodes(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info) {
     v8::Isolate* p_isolate = info.GetIsolate();
     v8::Local<v8::Object> codes = v8::Object::New(p_isolate);
-    codes->Set(p_isolate->GetCurrentContext(), v8::String::NewFromUtf8Literal(p_isolate, "200"), v8::String::NewFromUtf8Literal(p_isolate, "OK")).Check();
+    v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+    const int32_t status_codes[] = {100, 101, 200, 201, 204, 301, 302, 304, 400, 401, 403, 404, 405, 408, 409, 413, 429, 500, 501, 502, 503, 504};
+    for (int32_t status_code : status_codes) {
+        std::string status_key = std::to_string(status_code);
+        std::string status_message = getDefaultStatusMessage(status_code);
+        codes->Set(
+            context,
+            v8::String::NewFromUtf8(p_isolate, status_key.c_str()).ToLocalChecked(),
+            v8::String::NewFromUtf8(p_isolate, status_message.c_str()).ToLocalChecked()).Check();
+    }
     info.GetReturnValue().Set(codes);
 }
 
@@ -631,6 +938,20 @@ void HTTP::responseSetStatusMessage(v8::Local<v8::Name> property, v8::Local<v8::
     }
 }
 
+void HTTP::responseGetHeadersSent(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info) {
+    HTTPResponse* p_response = unwrapResponse(info.HolderV2());
+    if (p_response) {
+        info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(), p_response->getHeadersSent()));
+    }
+}
+
+void HTTP::responseGetFinished(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info) {
+    HTTPResponse* p_response = unwrapResponse(info.HolderV2());
+    if (p_response) {
+        info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(), p_response->getFinished()));
+    }
+}
+
 HTTPServer* HTTP::unwrapServer(v8::Local<v8::Object> obj) {
     if (obj->InternalFieldCount() > 0) return static_cast<HTTPServer*>(obj->GetInternalField(0).As<v8::External>()->Value());
     return nullptr;
@@ -639,6 +960,400 @@ HTTPServer* HTTP::unwrapServer(v8::Local<v8::Object> obj) {
 HTTPResponse* HTTP::unwrapResponse(v8::Local<v8::Object> obj) {
     if (obj->InternalFieldCount() > 0) return static_cast<HTTPResponse*>(obj->GetInternalField(0).As<v8::External>()->Value());
     return nullptr;
+}
+
+// --- HTTPClientRequest Implementation ---
+
+HTTPClientRequest::HTTPClientRequest(v8::Isolate* isolate, const std::string& method, const std::string& host, int32_t port, const std::string& path, v8::Local<v8::Object> headers, v8::Local<v8::Function> callback)
+    : p_isolate(isolate),
+      m_method(method),
+      m_host(host),
+      m_port(port),
+      m_path(path),
+      m_status_code(0),
+      m_last_header_state(HeaderParseState::NONE) {
+    if (!callback.IsEmpty()) {
+        m_response_callback.Reset(p_isolate, callback);
+    }
+
+    if (!headers.IsEmpty()) {
+        v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+        v8::Local<v8::Array> prop_names = headers->GetPropertyNames(context).ToLocalChecked();
+        for (uint32_t i = 0; i < prop_names->Length(); ++i) {
+            v8::Local<v8::Value> key = prop_names->Get(context, i).ToLocalChecked();
+            v8::Local<v8::Value> val = headers->Get(context, key).ToLocalChecked();
+            v8::String::Utf8Value key_str(p_isolate, key);
+            v8::String::Utf8Value val_str(p_isolate, val);
+            m_headers[normalizeHeaderName(std::string(*key_str, key_str.length()))] = std::string(*val_str, val_str.length());
+        }
+    }
+
+    if (m_headers.find("host") == m_headers.end()) {
+        m_headers["host"] = m_host;
+    }
+    if (m_headers.find("connection") == m_headers.end()) {
+        m_headers["connection"] = "close";
+    }
+
+    llhttp_settings_init(&m_settings);
+    m_settings.on_message_begin = onMessageBegin;
+    m_settings.on_status = onStatus;
+    m_settings.on_header_field = onHeaderField;
+    m_settings.on_header_value = onHeaderValue;
+    m_settings.on_headers_complete = onHeadersComplete;
+    m_settings.on_body = onBody;
+    m_settings.on_message_complete = onMessageComplete;
+
+    llhttp_init(&m_parser, HTTP_RESPONSE, &m_settings);
+    m_parser.data = this;
+}
+
+HTTPClientRequest::~HTTPClientRequest() {
+    if (sp_tcp_client) {
+        sp_tcp_client->disconnect();
+    }
+}
+
+v8::Local<v8::Object> HTTPClientRequest::createObject(v8::Isolate* p_isolate) {
+    v8::EscapableHandleScope handle_scope(p_isolate);
+    v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+    
+    v8::Local<v8::ObjectTemplate> tmpl = v8::ObjectTemplate::New(p_isolate);
+    tmpl->SetInternalFieldCount(1);
+    tmpl->Set(p_isolate, "write", v8::FunctionTemplate::New(p_isolate, HTTPClientRequest::write));
+    tmpl->Set(p_isolate, "end", v8::FunctionTemplate::New(p_isolate, HTTPClientRequest::end));
+    
+    v8::Local<v8::FunctionTemplate> ee_tmpl = Events::getEventEmitterTemplate(p_isolate);
+    v8::Local<v8::Function> ee_ctor = ee_tmpl->GetFunction(context).ToLocalChecked();
+    v8::Local<v8::Object> obj = ee_ctor->NewInstance(context).ToLocalChecked();
+    v8::Local<v8::Object> client_obj = tmpl->NewInstance(context).ToLocalChecked();
+    client_obj->SetInternalField(0, v8::External::New(p_isolate, this));
+    copyObjectProperties(p_isolate, context, obj, client_obj);
+
+    m_js_object.Reset(p_isolate, client_obj);
+    return handle_scope.Escape(client_obj);
+}
+
+void HTTPClientRequest::write(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    if (args.Length() > 0) {
+        std::string data;
+        if (readBinaryValue(args.GetIsolate(), args[0], &data)) {
+            p_self->m_body += data;
+        }
+    }
+}
+
+void HTTPClientRequest::end(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    auto* p_self = static_cast<HTTPClientRequest*>(args.This()->GetInternalField(0).As<v8::External>()->Value());
+    if (args.Length() > 0) {
+        std::string data;
+        if (readBinaryValue(args.GetIsolate(), args[0], &data)) {
+            p_self->m_body += data;
+        }
+    }
+    p_self->execute();
+}
+
+void HTTPClientRequest::execute() {
+    up_loop_thread = std::make_unique<trantor::EventLoopThread>();
+    up_loop_thread->run();
+    trantor::EventLoop* p_loop = up_loop_thread->getLoop();
+
+    trantor::InetAddress serverAddr(m_host, m_port);
+    sp_tcp_client = std::make_shared<trantor::TcpClient>(p_loop, serverAddr, "HTTPClient_" + m_host);
+
+    std::ostringstream req;
+    req << m_method << " " << m_path << " HTTP/1.1\r\n";
+    if (!m_body.empty() && m_headers.find("content-length") == m_headers.end()) {
+        m_headers["content-length"] = std::to_string(m_body.length());
+    }
+    for (const auto& pair : m_headers) {
+        req << pair.first << ": " << pair.second << "\r\n";
+    }
+    req << "\r\n";
+    req << m_body;
+
+    std::string request_str = req.str();
+
+    sp_tcp_client->setConnectionCallback([request_str](const trantor::TcpConnectionPtr& conn) {
+        if (conn->connected()) {
+            conn->send(request_str);
+        }
+    });
+
+    sp_tcp_client->setMessageCallback([this](const trantor::TcpConnectionPtr& conn, trantor::MsgBuffer* buf) {
+        std::string data(buf->peek(), buf->readableBytes());
+        buf->retrieveAll();
+        
+        llhttp_errno_t err = llhttp_execute(&m_parser, data.data(), data.length());
+        if (err != HPE_OK) {
+            std::cerr << "llhttp parse error in client: " << llhttp_errno_name(err) << std::endl;
+            conn->forceClose();
+        }
+    });
+
+    sp_tcp_client->connect();
+}
+
+int32_t HTTPClientRequest::onMessageBegin(llhttp_t* p_parser) {
+    return 0;
+}
+
+int32_t HTTPClientRequest::onStatus(llhttp_t* p_parser, const char* p_at, size_t length) {
+    auto* p_self = static_cast<HTTPClientRequest*>(p_parser->data);
+    p_self->m_status_code = p_parser->status_code;
+    p_self->m_status_message += std::string(p_at, length);
+    return 0;
+}
+
+int32_t HTTPClientRequest::onHeaderField(llhttp_t* p_parser, const char* p_at, size_t length) {
+    auto* p_self = static_cast<HTTPClientRequest*>(p_parser->data);
+    p_self->appendResponseHeaderField(p_at, length);
+    return 0;
+}
+
+int32_t HTTPClientRequest::onHeaderValue(llhttp_t* p_parser, const char* p_at, size_t length) {
+    auto* p_self = static_cast<HTTPClientRequest*>(p_parser->data);
+    p_self->appendResponseHeaderValue(p_at, length);
+    return 0;
+}
+
+int32_t HTTPClientRequest::onHeadersComplete(llhttp_t* p_parser) {
+    auto* p_self = static_cast<HTTPClientRequest*>(p_parser->data);
+    p_self->finishPendingResponseHeader();
+    
+    Task* p_task = new Task();
+    p_task->m_runner = [p_self](v8::Isolate* p_isolate, v8::Local<v8::Context> context, Task* p_task) {
+        p_self->emitResponse();
+    };
+    TaskQueue::getInstance().enqueue(p_task);
+    
+    return 0;
+}
+
+int32_t HTTPClientRequest::onBody(llhttp_t* p_parser, const char* p_at, size_t length) {
+    auto* p_self = static_cast<HTTPClientRequest*>(p_parser->data);
+    std::string data(p_at, length);
+    
+    Task* p_task = new Task();
+    p_task->m_runner = [p_self, data](v8::Isolate* p_isolate, v8::Local<v8::Context> context, Task* p_task) {
+        p_self->emitData(data);
+    };
+    TaskQueue::getInstance().enqueue(p_task);
+    
+    return 0;
+}
+
+int32_t HTTPClientRequest::onMessageComplete(llhttp_t* p_parser) {
+    auto* p_self = static_cast<HTTPClientRequest*>(p_parser->data);
+    
+    Task* p_task = new Task();
+    p_task->m_runner = [p_self](v8::Isolate* p_isolate, v8::Local<v8::Context> context, Task* p_task) {
+        p_self->emitEnd();
+    };
+    TaskQueue::getInstance().enqueue(p_task);
+    
+    return 0;
+}
+
+void HTTPClientRequest::appendResponseHeaderField(const char* p_data, size_t length) {
+    if (m_last_header_state == HeaderParseState::VALUE) {
+        finishPendingResponseHeader();
+    }
+    m_current_header_field.append(p_data, length);
+    m_last_header_state = HeaderParseState::FIELD;
+}
+
+void HTTPClientRequest::appendResponseHeaderValue(const char* p_data, size_t length) {
+    m_current_header_value.append(p_data, length);
+    m_last_header_state = HeaderParseState::VALUE;
+}
+
+void HTTPClientRequest::finishPendingResponseHeader() {
+    if (!m_current_header_field.empty()) {
+        m_raw_response_headers.push_back(m_current_header_field);
+        m_raw_response_headers.push_back(m_current_header_value);
+    }
+    m_current_header_field.clear();
+    m_current_header_value.clear();
+    m_last_header_state = HeaderParseState::NONE;
+}
+
+void HTTPClientRequest::emitResponse() {
+    v8::HandleScope handle_scope(p_isolate);
+    v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+
+    v8::Local<v8::FunctionTemplate> ee_tmpl = Events::getEventEmitterTemplate(p_isolate);
+    v8::Local<v8::Function> ee_ctor = ee_tmpl->GetFunction(context).ToLocalChecked();
+    v8::Local<v8::Object> res_obj = ee_ctor->NewInstance(context).ToLocalChecked();
+
+    res_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "statusCode"), v8::Integer::New(p_isolate, m_status_code)).Check();
+    res_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "statusMessage"), v8::String::NewFromUtf8(p_isolate, m_status_message.c_str()).ToLocalChecked()).Check();
+
+    v8::Local<v8::Object> headers = v8::Object::New(p_isolate);
+    for (size_t i = 0; i < m_raw_response_headers.size(); i += 2) {
+        std::string lower_name = normalizeHeaderName(m_raw_response_headers[i]);
+        headers->Set(context,
+                    v8::String::NewFromUtf8(p_isolate, lower_name.c_str()).ToLocalChecked(),
+                    v8::String::NewFromUtf8(p_isolate, m_raw_response_headers[i+1].c_str()).ToLocalChecked()).Check();
+    }
+    res_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "headers"), headers).Check();
+    m_response_obj.Reset(p_isolate, res_obj);
+
+    v8::Local<v8::Object> js_obj = m_js_object.Get(p_isolate);
+    v8::Local<v8::Function> emit_fn = js_obj->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "emit")).ToLocalChecked().As<v8::Function>();
+
+    v8::Local<v8::Value> emit_args[2] = {
+        v8::String::NewFromUtf8Literal(p_isolate, "response"),
+        res_obj
+    };
+    (void)emit_fn->Call(context, js_obj, 2, emit_args);
+
+    if (!m_response_callback.IsEmpty()) {
+        v8::Local<v8::Function> cb = m_response_callback.Get(p_isolate);
+        v8::Local<v8::Value> cb_args[1] = { res_obj };
+        (void)cb->Call(context, context->Global(), 1, cb_args);
+    }
+}
+
+void HTTPClientRequest::emitData(const std::string& data) {
+    if (m_response_obj.IsEmpty()) return;
+    v8::HandleScope handle_scope(p_isolate);
+    v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+
+    v8::Local<v8::Object> res_obj = m_response_obj.Get(p_isolate);
+    v8::Local<v8::Function> emit_fn = res_obj->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "emit")).ToLocalChecked().As<v8::Function>();
+
+    v8::Local<v8::Value> emit_args[2] = {
+        v8::String::NewFromUtf8Literal(p_isolate, "data"),
+        createBufferValue(p_isolate, data)
+    };
+    (void)emit_fn->Call(context, res_obj, 2, emit_args);
+}
+
+void HTTPClientRequest::emitEnd() {
+    if (m_response_obj.IsEmpty()) return;
+    v8::HandleScope handle_scope(p_isolate);
+    v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+
+    v8::Local<v8::Object> res_obj = m_response_obj.Get(p_isolate);
+    v8::Local<v8::Function> emit_fn = res_obj->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "emit")).ToLocalChecked().As<v8::Function>();
+
+    v8::Local<v8::Value> emit_args[1] = {
+        v8::String::NewFromUtf8Literal(p_isolate, "end")
+    };
+    (void)emit_fn->Call(context, res_obj, 1, emit_args);
+    
+    m_js_object.Reset();
+    m_response_obj.Reset();
+    m_response_callback.Reset();
+}
+
+void HTTP::request(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    v8::Isolate* p_isolate = args.GetIsolate();
+    v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+
+    if (args.Length() < 1) {
+        p_isolate->ThrowException(v8::Exception::TypeError(v8::String::NewFromUtf8Literal(p_isolate, "url or options required")));
+        return;
+    }
+
+    std::string method = "GET";
+    std::string host = "localhost";
+    int32_t port = 80;
+    std::string path = "/";
+    v8::Local<v8::Object> headers = v8::Object::New(p_isolate);
+    v8::Local<v8::Function> callback;
+
+    if (args[0]->IsString()) {
+        v8::String::Utf8Value url_v(p_isolate, args[0]);
+        std::string url_str = *url_v;
+
+        if (url_str.find("http://") == 0) {
+            url_str = url_str.substr(7);
+        }
+        size_t slash_pos = url_str.find_first_of('/');
+        if (slash_pos != std::string::npos) {
+            path = url_str.substr(slash_pos);
+            host = url_str.substr(0, slash_pos);
+        } else {
+            host = url_str;
+            path = "/";
+        }
+        
+        size_t colon_pos = host.find(':');
+        if (colon_pos != std::string::npos) {
+            port = std::stoi(host.substr(colon_pos + 1));
+            host = host.substr(0, colon_pos);
+        }
+
+        if (args.Length() > 1 && args[1]->IsObject() && !args[1]->IsFunction()) {
+            v8::Local<v8::Object> opts = args[1].As<v8::Object>();
+            v8::Local<v8::Value> m;
+            if (opts->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "method")).ToLocal(&m) && m->IsString()) {
+                v8::String::Utf8Value mv(p_isolate, m);
+                method = *mv;
+            }
+            v8::Local<v8::Value> hdrs;
+            if (opts->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "headers")).ToLocal(&hdrs) && hdrs->IsObject()) {
+                headers = hdrs.As<v8::Object>();
+            }
+            if (args.Length() > 2 && args[2]->IsFunction()) {
+                callback = args[2].As<v8::Function>();
+            }
+        } else if (args.Length() > 1 && args[1]->IsFunction()) {
+            callback = args[1].As<v8::Function>();
+        }
+    } else if (args[0]->IsObject()) {
+        v8::Local<v8::Object> opts = args[0].As<v8::Object>();
+        v8::Local<v8::Value> h;
+        if (opts->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "host")).ToLocal(&h) && h->IsString()) {
+            v8::String::Utf8Value hv(p_isolate, h);
+            host = *hv;
+        } else if (opts->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "hostname")).ToLocal(&h) && h->IsString()) {
+            v8::String::Utf8Value hv(p_isolate, h);
+            host = *hv;
+        }
+        v8::Local<v8::Value> po;
+        if (opts->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "port")).ToLocal(&po) && po->IsNumber()) {
+            port = po->Int32Value(context).ToChecked();
+        }
+        v8::Local<v8::Value> pa;
+        if (opts->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "path")).ToLocal(&pa) && pa->IsString()) {
+            v8::String::Utf8Value pav(p_isolate, pa);
+            path = *pav;
+        }
+        v8::Local<v8::Value> m;
+        if (opts->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "method")).ToLocal(&m) && m->IsString()) {
+            v8::String::Utf8Value mv(p_isolate, m);
+            method = *mv;
+        }
+        v8::Local<v8::Value> hdrs;
+        if (opts->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "headers")).ToLocal(&hdrs) && hdrs->IsObject()) {
+            headers = hdrs.As<v8::Object>();
+        }
+
+        if (args.Length() > 1 && args[1]->IsFunction()) {
+            callback = args[1].As<v8::Function>();
+        }
+    }
+
+    HTTPClientRequest* p_client = new HTTPClientRequest(p_isolate, method, host, port, path, headers, callback);
+    v8::Local<v8::Object> req_obj = p_client->createObject(p_isolate);
+    args.GetReturnValue().Set(req_obj);
+}
+
+void HTTP::get(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    v8::Isolate* p_isolate = args.GetIsolate();
+    v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+    
+    request(args);
+    if (!args.GetReturnValue().Get()->IsNullOrUndefined()) {
+        v8::Local<v8::Object> req_obj = args.GetReturnValue().Get().As<v8::Object>();
+        v8::Local<v8::Function> end_fn = req_obj->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "end")).ToLocalChecked().As<v8::Function>();
+        (void)end_fn->Call(context, req_obj, 0, nullptr);
+    }
 }
 
 } // namespace module

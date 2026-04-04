@@ -211,6 +211,9 @@ public:
     void emitResponse();
     void emitData(const std::string& data);
     void emitEnd();
+    void emitClose();
+    void destroyRequest();
+    void setTimeout(int32_t timeout_ms);
     void setHeader(const std::string& name, const std::string& value);
     bool hasHeader(const std::string& name) const;
     std::string getHeader(const std::string& name) const;
@@ -221,6 +224,7 @@ public:
     bool getFinished() const { return m_finished; }
     bool getExecuted() const { return m_executed; }
     bool isComplete() const { return m_request_complete; }
+    bool isDestroyed() const { return m_destroyed; }
     void retain();
     void release();
     void markGcPending() { m_gc_pending = true; }
@@ -230,7 +234,9 @@ public:
 
     static void write(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void end(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void destroy(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void flushHeaders(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void setTimeout(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void setHeader(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void getHeader(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void hasHeader(const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -281,11 +287,14 @@ private:
     std::atomic<bool> m_network_ref_active;
     std::atomic<int32_t> m_ref_count;
     std::atomic<bool> m_delete_scheduled;
+    bool m_destroyed;
+    int32_t m_timeout_ms;
 
     v8::Global<v8::Object> m_js_object;
     v8::Global<v8::Object> m_response_obj;
     v8::Global<v8::Function> m_response_callback;
     bool m_error_emitted;
+    bool m_close_emitted;
 
     void releaseNetworkReference();
     void scheduleDelete();

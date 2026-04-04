@@ -690,7 +690,7 @@ v8::Local<v8::Object> HTTPRequest::toObject() {
 HTTPResponse::HTTPResponse(v8::Isolate* p_isolate, const trantor::TcpConnectionPtr& p_conn)
     : p_isolate(p_isolate), m_conn(p_conn), m_status_code(200),
       m_headers_sent(false), m_finished(false), m_use_chunked_encoding(false),
-      m_gc_pending(false), m_ref_count(2), m_delete_scheduled(false) {}
+      m_gc_pending(false), m_ref_count(1), m_delete_scheduled(false) {}
 
 HTTPResponse::~HTTPResponse() {
     m_res_obj.Reset();
@@ -911,7 +911,6 @@ void HTTPResponse::end(const std::string& data) {
 
     m_finished = true;
     emit("finish");
-    release();
 }
 
 void HTTPResponse::sendHeaders() {
@@ -1270,8 +1269,8 @@ HTTPClientRequest* HTTP::unwrapClientRequest(v8::Local<v8::Object> obj) {
 
 // --- HTTPClientRequest Implementation ---
 
-HTTPClientRequest::HTTPClientRequest(v8::Isolate* isolate, const std::string& method, const std::string& host, int32_t port, const std::string& path, v8::Local<v8::Object> headers, v8::Local<v8::Function> callback)
-    : p_isolate(isolate),
+HTTPClientRequest::HTTPClientRequest(v8::Isolate* p_isolate, const std::string& method, const std::string& host, int32_t port, const std::string& path, v8::Local<v8::Object> headers, v8::Local<v8::Function> callback)
+    : p_isolate(p_isolate),
       m_method(method),
       m_host(host),
       m_port(port),
@@ -1693,6 +1692,10 @@ void HTTPClientRequest::finishPendingResponseHeader() {
 }
 
 void HTTPClientRequest::emitResponse() {
+    if (m_js_object.IsEmpty()) {
+        return;
+    }
+
     v8::HandleScope handle_scope(p_isolate);
     v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
 
@@ -1714,7 +1717,18 @@ void HTTPClientRequest::emitResponse() {
     m_response_obj.Reset(p_isolate, res_obj);
 
     v8::Local<v8::Object> js_obj = m_js_object.Get(p_isolate);
-    v8::Local<v8::Function> emit_fn = js_obj->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "emit")).ToLocalChecked().As<v8::Function>();
+    v8::Local<v8::Value> emit_val;
+    if (!js_obj->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "emit")).ToLocal(&emit_val) || !emit_val->IsFunction()) {
+        return;
+    }
+
+    v8::Local<v8::Function> emit_fn = emit_val.As<v8::Function>();
+    v8::Local<v8::Function> response_callback;
+    bool has_response_callback = false;
+    if (!m_response_callback.IsEmpty()) {
+        response_callback = m_response_callback.Get(p_isolate);
+        has_response_callback = true;
+    }
 
     v8::Local<v8::Value> emit_args[2] = {
         v8::String::NewFromUtf8Literal(p_isolate, "response"),
@@ -1722,20 +1736,27 @@ void HTTPClientRequest::emitResponse() {
     };
     (void)emit_fn->Call(context, js_obj, 2, emit_args);
 
-    if (!m_response_callback.IsEmpty()) {
-        v8::Local<v8::Function> cb = m_response_callback.Get(p_isolate);
+    if (has_response_callback) {
         v8::Local<v8::Value> cb_args[1] = { res_obj };
-        (void)cb->Call(context, context->Global(), 1, cb_args);
+        (void)response_callback->Call(context, context->Global(), 1, cb_args);
     }
 }
 
 void HTTPClientRequest::emitData(const std::string& data) {
-    if (m_response_obj.IsEmpty()) return;
+    if (m_response_obj.IsEmpty()) {
+        return;
+    }
+
     v8::HandleScope handle_scope(p_isolate);
     v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
 
     v8::Local<v8::Object> res_obj = m_response_obj.Get(p_isolate);
-    v8::Local<v8::Function> emit_fn = res_obj->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "emit")).ToLocalChecked().As<v8::Function>();
+    v8::Local<v8::Value> emit_val;
+    if (!res_obj->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "emit")).ToLocal(&emit_val) || !emit_val->IsFunction()) {
+        return;
+    }
+
+    v8::Local<v8::Function> emit_fn = emit_val.As<v8::Function>();
 
     v8::Local<v8::Value> emit_args[2] = {
         v8::String::NewFromUtf8Literal(p_isolate, "data"),
@@ -1745,12 +1766,20 @@ void HTTPClientRequest::emitData(const std::string& data) {
 }
 
 void HTTPClientRequest::emitEnd() {
-    if (m_response_obj.IsEmpty()) return;
+    if (m_response_obj.IsEmpty()) {
+        return;
+    }
+
     v8::HandleScope handle_scope(p_isolate);
     v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
 
     v8::Local<v8::Object> res_obj = m_response_obj.Get(p_isolate);
-    v8::Local<v8::Function> emit_fn = res_obj->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "emit")).ToLocalChecked().As<v8::Function>();
+    v8::Local<v8::Value> emit_val;
+    if (!res_obj->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "emit")).ToLocal(&emit_val) || !emit_val->IsFunction()) {
+        return;
+    }
+
+    v8::Local<v8::Function> emit_fn = emit_val.As<v8::Function>();
 
     v8::Local<v8::Value> emit_args[1] = {
         v8::String::NewFromUtf8Literal(p_isolate, "end")

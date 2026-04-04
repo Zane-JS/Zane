@@ -6,6 +6,7 @@
 #include <mutex>
 #include <memory>
 #include <cstring>
+#include <ctime>
 #include <trantor/net/InetAddress.h>
 #include <trantor/net/TcpClient.h>
 #include <atomic>
@@ -212,6 +213,19 @@ v8::Local<v8::Value> createBufferValue(v8::Isolate* p_isolate, const std::string
     return buffer;
 }
 
+std::string formatHttpDate() {
+    std::time_t now = std::time(nullptr);
+    std::tm gmt_now{};
+#ifdef _WIN32
+    gmtime_s(&gmt_now, &now);
+#else
+    gmtime_r(&now, &gmt_now);
+#endif
+    char buffer[64];
+    std::strftime(buffer, sizeof(buffer), "%a, %d %b %Y %H:%M:%S GMT", &gmt_now);
+    return std::string(buffer);
+}
+
 void copyObjectProperties(v8::Isolate* p_isolate,
                           v8::Local<v8::Context> context,
                           v8::Local<v8::Object> source,
@@ -376,6 +390,7 @@ void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Fun
         std::shared_ptr<HTTPRequest> sp_request;
         if (!p_conn->hasContext()) {
             sp_request = std::make_shared<HTTPRequest>(p_isolate);
+            sp_request->setConnection(p_conn);
             p_conn->setContext(sp_request);
         } else {
             sp_request = p_conn->getContext<HTTPRequest>();
@@ -385,6 +400,27 @@ void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Fun
         llhttp_errno_t err = sp_request->parse(p_buffer->peek(), p_buffer->readableBytes());
         if (err != HPE_OK) {
             std::cerr << "llhttp parse error: " << llhttp_errno_name(err) << std::endl;
+            if (!m_server_obj.IsEmpty()) {
+                Task* p_task = new Task();
+                std::string error_message = llhttp_errno_name(err);
+                retain();
+                p_task->m_runner = [this, error_message](v8::Isolate* p_isolate, v8::Local<v8::Context> context, Task* p_task) {
+                    if (!m_server_obj.IsEmpty()) {
+                        v8::HandleScope handle_scope(p_isolate);
+                        v8::Local<v8::Object> server_obj = m_server_obj.Get(p_isolate);
+                        v8::Local<v8::Value> emit_val;
+                        if (server_obj->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "emit")).ToLocal(&emit_val) && emit_val->IsFunction()) {
+                            v8::Local<v8::Value> emit_args[2] = {
+                                v8::String::NewFromUtf8Literal(p_isolate, "clientError"),
+                                v8::Exception::Error(v8::String::NewFromUtf8(p_isolate, error_message.c_str()).ToLocalChecked())
+                            };
+                            (void)emit_val.As<v8::Function>()->Call(context, server_obj, 2, emit_args);
+                        }
+                    }
+                    release();
+                };
+                TaskQueue::getInstance().enqueue(p_task);
+            }
             p_conn->forceClose();
             return;
         }
@@ -472,8 +508,18 @@ void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Fun
     });
 
     // Cleanup context when connection dies
-    up_tcp_server->setConnectionCallback([](const trantor::TcpConnectionPtr& p_conn) {
-        if (!p_conn->connected()) {
+    up_tcp_server->setConnectionCallback([this](const trantor::TcpConnectionPtr& p_conn) {
+        std::lock_guard<std::mutex> lock(m_connections_mutex);
+        if (p_conn->connected()) {
+            m_connections.insert(p_conn);
+        } else {
+            if (p_conn->hasContext()) {
+                std::shared_ptr<HTTPRequest> sp_request = p_conn->getContext<HTTPRequest>();
+                if (sp_request) {
+                    sp_request->markDestroyed();
+                }
+            }
+            m_connections.erase(p_conn);
             p_conn->clearContext();
         }
     });
@@ -486,6 +532,20 @@ void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Fun
         v8::HandleScope handle_scope(p_isolate);
         v8::Local<v8::Context> p_context = p_isolate->GetCurrentContext();
         (void)callback->Call(p_context, p_context->Global(), 0, nullptr);
+    }
+}
+
+void HTTPServer::closeAllConnections() {
+    std::vector<trantor::TcpConnectionPtr> connections;
+    {
+        std::lock_guard<std::mutex> lock(m_connections_mutex);
+        connections.assign(m_connections.begin(), m_connections.end());
+    }
+
+    for (const trantor::TcpConnectionPtr& p_conn : connections) {
+        if (p_conn) {
+            p_conn->forceClose();
+        }
     }
 }
 
@@ -520,6 +580,7 @@ HTTPRequest::HTTPRequest(v8::Isolate* p_isolate)
       m_parsing_complete(false),
       m_http_major(1),
       m_http_minor(1),
+      m_destroyed(false),
       m_last_header_state(HeaderParseState::NONE) {
     llhttp_settings_init(&m_settings);
     m_settings.on_url = on_url;
@@ -584,6 +645,25 @@ void HTTPRequest::addHeader(const std::string& name, const std::string& value) {
     m_header_values[normalizeHeaderName(name)].push_back(value);
 }
 
+void HTTPRequest::setConnection(const trantor::TcpConnectionPtr& conn) {
+    m_conn = conn;
+}
+
+void HTTPRequest::markDestroyed() {
+    m_destroyed = true;
+}
+
+void HTTPRequest::destroy() {
+    if (m_destroyed) {
+        return;
+    }
+
+    m_destroyed = true;
+    if (m_conn) {
+        m_conn->forceClose();
+    }
+}
+
 void HTTPRequest::setJSObject(v8::Local<v8::Object> obj) {
     m_req_obj.Reset(p_isolate, obj);
 }
@@ -594,10 +674,18 @@ v8::Local<v8::Object> HTTPRequest::toObject() {
     v8::Local<v8::Object> obj;
     
     if (m_req_obj.IsEmpty()) {
-        // Create EventEmitter instance
+        v8::Local<v8::ObjectTemplate> tmpl = v8::ObjectTemplate::New(p_isolate);
+        tmpl->SetInternalFieldCount(1);
+        tmpl->Set(p_isolate, "destroy", v8::FunctionTemplate::New(p_isolate, HTTP::requestDestroy));
+        tmpl->SetNativeDataProperty(v8::String::NewFromUtf8Literal(p_isolate, "destroyed"),
+                                    HTTP::requestGetDestroyed,
+                                    nullptr);
+        obj = tmpl->NewInstance(p_context).ToLocalChecked();
+        obj->SetAlignedPointerInInternalField(0, this, v8::kEmbedderDataTypeTagDefault);
         v8::Local<v8::FunctionTemplate> ee_tmpl = Events::getEventEmitterTemplate(p_isolate);
         v8::Local<v8::Function> ee_ctor = ee_tmpl->GetFunction(p_context).ToLocalChecked();
-        obj = ee_ctor->NewInstance(p_context).ToLocalChecked();
+        v8::Local<v8::Object> ee_obj = ee_ctor->NewInstance(p_context).ToLocalChecked();
+        copyObjectProperties(p_isolate, p_context, ee_obj, obj);
         m_req_obj.Reset(p_isolate, obj);
     } else {
         obj = m_req_obj.Get(p_isolate);
@@ -690,7 +778,7 @@ v8::Local<v8::Object> HTTPRequest::toObject() {
 HTTPResponse::HTTPResponse(v8::Isolate* p_isolate, const trantor::TcpConnectionPtr& p_conn)
     : p_isolate(p_isolate), m_conn(p_conn), m_status_code(200),
       m_headers_sent(false), m_finished(false), m_use_chunked_encoding(false),
-      m_gc_pending(false), m_ref_count(1), m_delete_scheduled(false) {}
+      m_send_date(true), m_gc_pending(false), m_ref_count(1), m_delete_scheduled(false) {}
 
 HTTPResponse::~HTTPResponse() {
     m_res_obj.Reset();
@@ -734,6 +822,9 @@ v8::Local<v8::Object> HTTPResponse::toObject() {
     tmpl->SetNativeDataProperty(v8::String::NewFromUtf8Literal(p_isolate, "writableFinished"),
                                 HTTP::responseGetFinished,
                                 nullptr);
+    tmpl->SetNativeDataProperty(v8::String::NewFromUtf8Literal(p_isolate, "sendDate"),
+                                HTTP::responseGetSendDate,
+                                HTTP::responseSetSendDate);
                        
     tmpl->Set(p_isolate, "writeHead", v8::FunctionTemplate::New(p_isolate, HTTP::responseWriteHead));
     tmpl->Set(p_isolate, "setHeader", v8::FunctionTemplate::New(p_isolate, HTTP::responseSetHeader));
@@ -744,6 +835,7 @@ v8::Local<v8::Object> HTTPResponse::toObject() {
     tmpl->Set(p_isolate, "getHeaders", v8::FunctionTemplate::New(p_isolate, HTTP::responseGetHeaders));
     tmpl->Set(p_isolate, "write", v8::FunctionTemplate::New(p_isolate, HTTP::responseWrite));
     tmpl->Set(p_isolate, "end", v8::FunctionTemplate::New(p_isolate, HTTP::responseEnd));
+    tmpl->Set(p_isolate, "flushHeaders", v8::FunctionTemplate::New(p_isolate, HTTP::responseFlushHeaders));
 
     v8::Local<v8::FunctionTemplate> ee_tmpl = Events::getEventEmitterTemplate(p_isolate);
     v8::Local<v8::Function> ee_ctor = ee_tmpl->GetFunction(p_context).ToLocalChecked();
@@ -752,6 +844,12 @@ v8::Local<v8::Object> HTTPResponse::toObject() {
     v8::Local<v8::Object> res_obj = tmpl->NewInstance(p_context).ToLocalChecked();
     res_obj->SetAlignedPointerInInternalField(0, this, v8::kEmbedderDataTypeTagDefault);
     copyObjectProperties(p_isolate, p_context, ee_obj, res_obj);
+    if (m_conn && m_conn->hasContext()) {
+        std::shared_ptr<HTTPRequest> sp_request = m_conn->getContext<HTTPRequest>();
+        if (sp_request) {
+            res_obj->Set(p_context, v8::String::NewFromUtf8Literal(p_isolate, "req"), sp_request->toObject()).Check();
+        }
+    }
 
     m_res_obj.Reset(p_isolate, res_obj);
     m_res_obj.SetWeak(this, weakDeleteResponse, v8::WeakCallbackType::kParameter);
@@ -913,6 +1011,20 @@ void HTTPResponse::end(const std::string& data) {
     emit("finish");
 }
 
+void HTTPResponse::flushHeaders() {
+    if (m_finished || m_headers_sent) {
+        return;
+    }
+
+    if (!hasHeader("content-length") && !hasHeader("transfer-encoding")) {
+        m_headers["transfer-encoding"] = {"chunked"};
+        m_use_chunked_encoding = true;
+    } else if (getFirstHeaderValue("transfer-encoding") == "chunked") {
+        m_use_chunked_encoding = true;
+    }
+    sendHeaders();
+}
+
 void HTTPResponse::sendHeaders() {
     if (m_headers_sent) {
         return;
@@ -920,6 +1032,9 @@ void HTTPResponse::sendHeaders() {
 
     std::ostringstream ss;
     std::string msg = m_status_message.empty() ? getDefaultStatusMessage(m_status_code) : m_status_message;
+    if (m_send_date && !hasHeader("date")) {
+        m_headers["date"] = {formatHttpDate()};
+    }
     ss << "HTTP/1.1 " << m_status_code << " " << msg << "\r\n";
     for (const auto& pair : m_headers) {
         for (const std::string& value : pair.second) {
@@ -1007,6 +1122,7 @@ void HTTP::createServer(const v8::FunctionCallbackInfo<v8::Value>& args) {
     tmpl->SetInternalFieldCount(1);
     tmpl->Set(p_isolate, "listen", v8::FunctionTemplate::New(p_isolate, serverListen));
     tmpl->Set(p_isolate, "close", v8::FunctionTemplate::New(p_isolate, serverClose));
+    tmpl->Set(p_isolate, "closeAllConnections", v8::FunctionTemplate::New(p_isolate, serverCloseAllConnections));
     tmpl->SetNativeDataProperty(v8::String::NewFromUtf8Literal(p_isolate, "listening"),
                                 HTTP::serverGetListening,
                                 nullptr);
@@ -1043,6 +1159,13 @@ void HTTP::serverClose(const v8::FunctionCallbackInfo<v8::Value>& args) {
         v8::Local<v8::Function> callback;
         if (args.Length() > 0 && args[0]->IsFunction()) callback = args[0].As<v8::Function>();
         p_server->close(callback);
+    }
+}
+
+void HTTP::serverCloseAllConnections(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    auto* p_server = unwrapServer(args.This());
+    if (p_server) {
+        p_server->closeAllConnections();
     }
 }
 
@@ -1161,6 +1284,13 @@ void HTTP::responseEnd(const v8::FunctionCallbackInfo<v8::Value>& args) {
     }
 }
 
+void HTTP::responseFlushHeaders(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    auto* p_response = unwrapResponse(args.This());
+    if (p_response) {
+        p_response->flushHeaders();
+    }
+}
+
 void HTTP::getMethods(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info) {
     v8::Isolate* p_isolate = info.GetIsolate();
     const char* methods[] = {
@@ -1248,6 +1378,34 @@ void HTTP::responseGetFinished(v8::Local<v8::Name> property, const v8::PropertyC
     }
 }
 
+void HTTP::responseGetSendDate(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info) {
+    HTTPResponse* p_response = unwrapResponse(info.HolderV2());
+    if (p_response) {
+        info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(), p_response->getSendDate()));
+    }
+}
+
+void HTTP::responseSetSendDate(v8::Local<v8::Name> property, v8::Local<v8::Value> value, const v8::PropertyCallbackInfo<void>& info) {
+    HTTPResponse* p_response = unwrapResponse(info.HolderV2());
+    if (p_response && value->IsBoolean()) {
+        p_response->setSendDate(value.As<v8::Boolean>()->Value());
+    }
+}
+
+void HTTP::requestDestroy(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    HTTPRequest* p_request = unwrapRequest(args.This());
+    if (p_request) {
+        p_request->destroy();
+    }
+}
+
+void HTTP::requestGetDestroyed(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info) {
+    HTTPRequest* p_request = unwrapRequest(info.HolderV2());
+    if (p_request) {
+        info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(), p_request->isDestroyed()));
+    }
+}
+
 void HTTP::serverGetListening(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info) {
     HTTPServer* p_server = unwrapServer(info.HolderV2());
     if (p_server) {
@@ -1257,6 +1415,10 @@ void HTTP::serverGetListening(v8::Local<v8::Name> property, const v8::PropertyCa
 
 HTTPServer* HTTP::unwrapServer(v8::Local<v8::Object> obj) {
     return unwrapExternalPointer<HTTPServer>(obj);
+}
+
+HTTPRequest* HTTP::unwrapRequest(v8::Local<v8::Object> obj) {
+    return unwrapExternalPointer<HTTPRequest>(obj);
 }
 
 HTTPResponse* HTTP::unwrapResponse(v8::Local<v8::Object> obj) {
@@ -1283,7 +1445,8 @@ HTTPClientRequest::HTTPClientRequest(v8::Isolate* p_isolate, const std::string& 
       m_gc_pending(false),
       m_network_ref_active(false),
       m_ref_count(1),
-      m_delete_scheduled(false) {
+      m_delete_scheduled(false),
+      m_error_emitted(false) {
     if (!callback.IsEmpty()) {
         m_response_callback.Reset(p_isolate, callback);
     }
@@ -1583,6 +1746,27 @@ void HTTPClientRequest::execute() {
         if (conn->connected()) {
             conn->send(request_str);
         } else {
+            if (!m_request_complete && !m_error_emitted) {
+                m_error_emitted = true;
+                retain();
+                Task* p_task = new Task();
+                p_task->m_runner = [this](v8::Isolate* p_isolate, v8::Local<v8::Context> context, Task* p_task) {
+                    if (!m_js_object.IsEmpty()) {
+                        v8::HandleScope handle_scope(p_isolate);
+                        v8::Local<v8::Object> js_obj = m_js_object.Get(p_isolate);
+                        v8::Local<v8::Value> emit_val;
+                        if (js_obj->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "emit")).ToLocal(&emit_val) && emit_val->IsFunction()) {
+                            v8::Local<v8::Value> emit_args[2] = {
+                                v8::String::NewFromUtf8Literal(p_isolate, "error"),
+                                v8::Exception::Error(v8::String::NewFromUtf8Literal(p_isolate, "socket hang up"))
+                            };
+                            (void)emit_val.As<v8::Function>()->Call(context, js_obj, 2, emit_args);
+                        }
+                    }
+                    release();
+                };
+                TaskQueue::getInstance().enqueue(p_task);
+            }
             releaseNetworkReference();
         }
     });

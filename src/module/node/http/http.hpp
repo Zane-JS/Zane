@@ -6,6 +6,7 @@
 #include <map>
 #include <string>
 #include <memory>
+#include <set>
 #include <vector>
 #include <atomic>
 #include <mutex>
@@ -34,6 +35,7 @@ public:
     
     void listen(int32_t port, const std::string& host, v8::Local<v8::Function> callback);
     void close(v8::Local<v8::Function> callback);
+    void closeAllConnections();
     void setRequestHandler(v8::Local<v8::Function> handler);
     void setJSObject(v8::Local<v8::Object> obj);
     void retain();
@@ -60,6 +62,8 @@ private:
     std::atomic<bool> m_delete_scheduled;
     int32_t m_port;
     std::string m_host;
+    std::mutex m_connections_mutex;
+    std::set<trantor::TcpConnectionPtr> m_connections;
     
     trantor::EventLoopThread m_loop_thread;
     std::unique_ptr<trantor::TcpServer> up_tcp_server;
@@ -98,6 +102,10 @@ public:
     void appendHeaderValue(const char* p_data, size_t length);
     void finishPendingHeader();
     void addHeader(const std::string& name, const std::string& value);
+    void setConnection(const trantor::TcpConnectionPtr& conn);
+    void markDestroyed();
+    bool isDestroyed() const { return m_destroyed; }
+    void destroy();
 
     const std::string& getMethod() const { return m_method; }
     const std::string& getUrl() const { return m_url; }
@@ -119,6 +127,8 @@ private:
     v8::Global<v8::Object> m_req_obj;
     std::string m_method;
     std::string m_url;
+    trantor::TcpConnectionPtr m_conn;
+    bool m_destroyed;
     std::map<std::string, std::vector<std::string>> m_header_values;
     std::vector<std::string> m_raw_headers;
     HeaderParseState m_last_header_state;
@@ -148,6 +158,7 @@ public:
     v8::Local<v8::Object> getHeaders();
     void write(const std::string& data);
     void end(const std::string& data);
+    void flushHeaders();
 
     bool getHeadersSent() const { return m_headers_sent; }
     bool getFinished() const { return m_finished; }
@@ -156,6 +167,8 @@ public:
     void setStatusCode(int32_t code) { m_status_code = code; }
     std::string getStatusMessage() const { return m_status_message; }
     void setStatusMessage(const std::string& msg) { m_status_message = msg; }
+    bool getSendDate() const { return m_send_date; }
+    void setSendDate(bool send_date) { m_send_date = send_date; }
     void retain();
     void release();
     void markGcPending() { m_gc_pending = true; }
@@ -170,6 +183,7 @@ private:
     bool m_headers_sent;
     bool m_finished;
     bool m_use_chunked_encoding;
+    bool m_send_date;
     std::atomic<bool> m_gc_pending;
     std::atomic<int32_t> m_ref_count;
     std::atomic<bool> m_delete_scheduled;
@@ -271,6 +285,7 @@ private:
     v8::Global<v8::Object> m_js_object;
     v8::Global<v8::Object> m_response_obj;
     v8::Global<v8::Function> m_response_callback;
+    bool m_error_emitted;
 
     void releaseNetworkReference();
     void scheduleDelete();
@@ -283,6 +298,7 @@ public:
     static void createServer(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void serverListen(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void serverClose(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void serverCloseAllConnections(const v8::FunctionCallbackInfo<v8::Value>& args);
 
     static void request(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void get(const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -296,7 +312,8 @@ public:
     static void responseGetHeaders(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void responseWrite(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void responseEnd(const v8::FunctionCallbackInfo<v8::Value>& args);
-    
+    static void responseFlushHeaders(const v8::FunctionCallbackInfo<v8::Value>& args);
+     
     // JS Accessors
     static void responseGetStatusCode(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
     static void responseSetStatusCode(v8::Local<v8::Name> property, v8::Local<v8::Value> value, const v8::PropertyCallbackInfo<void>& info);
@@ -304,13 +321,18 @@ public:
     static void responseSetStatusMessage(v8::Local<v8::Name> property, v8::Local<v8::Value> value, const v8::PropertyCallbackInfo<void>& info);
     static void responseGetHeadersSent(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
     static void responseGetFinished(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
+    static void responseGetSendDate(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
+    static void responseSetSendDate(v8::Local<v8::Name> property, v8::Local<v8::Value> value, const v8::PropertyCallbackInfo<void>& info);
     static void serverGetListening(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
-     
+    static void requestDestroy(const v8::FunctionCallbackInfo<v8::Value>& args);
+    static void requestGetDestroyed(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
+      
     static void getMethods(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
     static void getStatusCodes(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
 
 private:
     static HTTPServer* unwrapServer(v8::Local<v8::Object> obj);
+    static HTTPRequest* unwrapRequest(v8::Local<v8::Object> obj);
     static HTTPResponse* unwrapResponse(v8::Local<v8::Object> obj);
     static HTTPClientRequest* unwrapClientRequest(v8::Local<v8::Object> obj);
 };

@@ -7,6 +7,8 @@
 #include <memory>
 #include <cstring>
 #include <ctime>
+#include <algorithm>
+#include <cctype>
 #include <trantor/net/InetAddress.h>
 #include <trantor/net/TcpClient.h>
 #include <atomic>
@@ -20,6 +22,10 @@ namespace module {
 std::atomic<int32_t> HTTPServer::m_active_servers{0};
 
 namespace {
+
+constexpr size_t kMaxIncomingHeaderCount = 128;
+constexpr size_t kMaxIncomingBodyBytes = 10 * 1024 * 1024;
+constexpr size_t kServerIdleTimeoutSeconds = 30;
 
 template <typename T>
 T* unwrapExternalPointer(v8::Local<v8::Object> obj) {
@@ -49,6 +55,171 @@ std::string normalizeHeaderName(const std::string& name) {
     return normalized;
 }
 
+bool isValidHeaderName(const std::string& name) {
+    if (name.empty()) {
+        return false;
+    }
+
+    for (unsigned char ch : name) {
+        if ((ch >= 'a' && ch <= 'z') ||
+            (ch >= 'A' && ch <= 'Z') ||
+            (ch >= '0' && ch <= '9')) {
+            continue;
+        }
+
+        switch (ch) {
+        case '!':
+        case '#':
+        case '$':
+        case '%':
+        case '&':
+        case '\'':
+        case '*':
+        case '+':
+        case '-':
+        case '.':
+        case '^':
+        case '_':
+        case '`':
+        case '|':
+        case '~':
+            continue;
+        default:
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool isValidHeaderValue(const std::string& value) {
+    for (unsigned char ch : value) {
+        if (ch == '\r' || ch == '\n' || ch == '\0') {
+            return false;
+        }
+        if (ch < 0x20 && ch != '\t') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool validateHeaderValues(const std::vector<std::string>& values) {
+    if (values.empty()) {
+        return false;
+    }
+
+    for (const std::string& value : values) {
+        if (!isValidHeaderValue(value)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool tryParsePort(const std::string& value, int32_t* p_port);
+
+bool parseHttpUrl(const std::string& url,
+                  std::string* p_host,
+                  int32_t* p_port,
+                  std::string* p_path) {
+    if (!p_host || !p_port || !p_path || url.empty()) {
+        return false;
+    }
+
+    std::string working = url;
+    if (working.rfind("http://", 0) == 0) {
+        working = working.substr(7);
+    } else if (working.find("://") != std::string::npos) {
+        return false;
+    }
+
+    size_t authority_end = working.find_first_of("/?#");
+    std::string authority = authority_end == std::string::npos ? working : working.substr(0, authority_end);
+    std::string path = authority_end == std::string::npos ? "/" : working.substr(authority_end);
+    if (authority.empty() || authority.find('@') != std::string::npos) {
+        return false;
+    }
+
+    size_t fragment_pos = path.find('#');
+    if (fragment_pos != std::string::npos) {
+        path = path.substr(0, fragment_pos);
+    }
+    if (path.empty()) {
+        path = "/";
+    }
+    if (path[0] != '/') {
+        return false;
+    }
+
+    std::string host = authority;
+    int32_t port = *p_port;
+    if (!authority.empty() && authority[0] == '[') {
+        size_t closing = authority.find(']');
+        if (closing == std::string::npos) {
+            return false;
+        }
+        host = authority.substr(1, closing - 1);
+        std::string remainder = authority.substr(closing + 1);
+        if (!remainder.empty()) {
+            if (remainder[0] != ':' || !tryParsePort(remainder.substr(1), &port)) {
+                return false;
+            }
+        }
+    } else {
+        size_t colon = authority.rfind(':');
+        if (colon != std::string::npos) {
+            std::string port_part = authority.substr(colon + 1);
+            if (!port_part.empty() && std::all_of(port_part.begin(), port_part.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
+                if (!tryParsePort(port_part, &port)) {
+                    return false;
+                }
+                host = authority.substr(0, colon);
+            }
+        }
+    }
+
+    if (host.empty()) {
+        return false;
+    }
+    for (unsigned char ch : host) {
+        if (ch <= 0x20 || ch == '/' || ch == '\\') {
+            return false;
+        }
+    }
+
+    *p_host = host;
+    *p_port = port;
+    *p_path = path;
+    return true;
+}
+
+bool isValidRequestHost(const std::string& host) {
+    if (host.empty() || host.find('@') != std::string::npos) {
+        return false;
+    }
+
+    for (unsigned char ch : host) {
+        if (ch <= 0x20 || ch == '/' || ch == '\\' || ch == '\r' || ch == '\n') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool isValidRequestPath(const std::string& path) {
+    if (path.empty() || path[0] != '/') {
+        return false;
+    }
+
+    for (unsigned char ch : path) {
+        if (ch == '\r' || ch == '\n' || ch == '\0') {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool shouldDiscardDuplicateHeader(const std::string& name) {
     return name == "age" ||
            name == "authorization" ||
@@ -69,6 +240,8 @@ bool shouldDiscardDuplicateHeader(const std::string& name) {
            name == "server" ||
            name == "user-agent";
 }
+
+bool tryParsePort(const std::string& value, int32_t* p_port);
 
 std::string getDefaultStatusMessage(int32_t status_code) {
     switch (status_code) {
@@ -302,8 +475,7 @@ static int32_t on_headers_complete(llhttp_t* p_parser) {
 
 static int32_t on_body(llhttp_t* p_parser, const char* p_at, size_t length) {
     auto* p_request = static_cast<HTTPRequest*>(p_parser->data);
-    p_request->pushEvent(HTTPRequest::HttpEventType::BODY_CHUNK, std::string(p_at, length));
-    return 0;
+    return p_request->appendBodyChunk(p_at, length) ? 0 : HPE_USER;
 }
 
 static int32_t on_message_complete(llhttp_t* p_parser) {
@@ -380,6 +552,7 @@ void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Fun
 
     trantor::InetAddress addr(host, (uint16_t)port);
     up_tcp_server = std::make_unique<trantor::TcpServer>(p_loop, addr, "z8_http_server");
+    up_tcp_server->kickoffIdleConnections(kServerIdleTimeoutSeconds);
     
     // Set thread num for performance (use all cores)
     up_tcp_server->setIoLoopNum(std::thread::hardware_concurrency());
@@ -399,10 +572,9 @@ void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Fun
         // Parse data
         llhttp_errno_t err = sp_request->parse(p_buffer->peek(), p_buffer->readableBytes());
         if (err != HPE_OK) {
-            std::cerr << "llhttp parse error: " << llhttp_errno_name(err) << std::endl;
             if (!m_server_obj.IsEmpty()) {
                 Task* p_task = new Task();
-                std::string error_message = llhttp_errno_name(err);
+                std::string error_message = "Parse error";
                 retain();
                 p_task->m_runner = [this, error_message](v8::Isolate* p_isolate, v8::Local<v8::Context> context, Task* p_task) {
                     if (!m_server_obj.IsEmpty()) {
@@ -460,8 +632,7 @@ void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Fun
                                     v8::TryCatch try_catch(p_isolate);
                                     (void)handler->Call(context, context->Global(), 2, argv);
                                     if (try_catch.HasCaught()) {
-                                        v8::String::Utf8Value error(p_isolate, try_catch.Exception());
-                                        std::cerr << "Error in HTTP handler: " << *error << std::endl;
+                                        try_catch.Reset();
                                     }
                                 }
                                 continue;
@@ -479,8 +650,7 @@ void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Fun
                             (void)handler->Call(context, context->Global(), 2, argv);
                             
                             if (try_catch.HasCaught()) {
-                                v8::String::Utf8Value error(p_isolate, try_catch.Exception());
-                                std::cerr << "Error in HTTP handler: " << *error << std::endl;
+                                try_catch.Reset();
                             }
                         }
                     } else if (ev.m_type == HTTPRequest::HttpEventType::BODY_CHUNK) {
@@ -588,6 +758,8 @@ HTTPRequest::HTTPRequest(v8::Isolate* p_isolate)
       m_http_major(1),
       m_http_minor(1),
       m_destroyed(false),
+      m_header_count(0),
+      m_body_size(0),
       m_last_header_state(HeaderParseState::NONE) {
     llhttp_settings_init(&m_settings);
     m_settings.on_url = on_url;
@@ -647,9 +819,44 @@ std::vector<HTTPRequest::HttpEvent> HTTPRequest::popEvents() {
 }
 
 void HTTPRequest::addHeader(const std::string& name, const std::string& value) {
+    if (!isValidHeaderName(name) || !isValidHeaderValue(value)) {
+        llhttp_set_error_reason(&m_parser, "Invalid header");
+        return;
+    }
+    if (m_header_count >= kMaxIncomingHeaderCount) {
+        llhttp_set_error_reason(&m_parser, "Too many headers");
+        return;
+    }
+    m_header_count++;
     m_raw_headers.push_back(name);
     m_raw_headers.push_back(value);
     m_header_values[normalizeHeaderName(name)].push_back(value);
+}
+
+bool HTTPRequest::appendBodyChunk(const char* p_data, size_t length) {
+    if (m_body_size + length > kMaxIncomingBodyBytes) {
+        llhttp_set_error_reason(&m_parser, "Request body too large");
+        return false;
+    }
+
+    m_body_size += length;
+    pushEvent(HTTPRequest::HttpEventType::BODY_CHUNK, std::string(p_data, length));
+    return true;
+}
+
+bool HTTPRequest::shouldCloseConnection() const {
+    auto it = m_header_values.find("connection");
+    if (it == m_header_values.end()) {
+        return false;
+    }
+
+    for (const std::string& value : it->second) {
+        std::string normalized = normalizeHeaderName(value);
+        if (normalized.find("close") != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void HTTPRequest::setConnection(const trantor::TcpConnectionPtr& conn) {
@@ -891,7 +1098,10 @@ void HTTPResponse::writeHead(int32_t status_code, const std::string& status_mess
             v8::Local<v8::Value> val = headers->Get(p_context, key).ToLocalChecked();
             v8::String::Utf8Value key_str(p_isolate, key);
             std::vector<std::string> values;
-            if (extractHeaderValues(p_isolate, val, &values)) {
+            std::string header_name(*key_str, key_str.length());
+            if (extractHeaderValues(p_isolate, val, &values) &&
+                isValidHeaderName(header_name) &&
+                validateHeaderValues(values)) {
                 m_headers[normalizeHeaderName(std::string(*key_str, key_str.length()))] = values;
             }
         }
@@ -913,6 +1123,9 @@ void HTTPResponse::setHeader(const std::string& name, const std::string& value) 
 
 void HTTPResponse::setHeader(const std::string& name, const std::vector<std::string>& values) {
     if (m_headers_sent) {
+        return;
+    }
+    if (!isValidHeaderName(name) || !validateHeaderValues(values)) {
         return;
     }
     m_headers[normalizeHeaderName(name)] = values;
@@ -1024,6 +1237,20 @@ void HTTPResponse::end(const std::string& data) {
 
     m_finished = true;
     emit("finish");
+    if (m_conn && m_conn->hasContext()) {
+        std::shared_ptr<HTTPRequest> sp_request = m_conn->getContext<HTTPRequest>();
+        if (sp_request && sp_request->shouldCloseConnection()) {
+            trantor::TcpConnectionPtr conn = m_conn;
+            trantor::EventLoop* p_loop = conn->getLoop();
+            if (p_loop) {
+                p_loop->runInLoop([conn]() {
+                    conn->shutdown();
+                });
+            } else {
+                conn->shutdown();
+            }
+        }
+    }
 }
 
 void HTTPResponse::flushHeaders() {
@@ -1049,6 +1276,12 @@ void HTTPResponse::sendHeaders() {
     std::string msg = m_status_message.empty() ? getDefaultStatusMessage(m_status_code) : m_status_message;
     if (m_send_date && !hasHeader("date")) {
         m_headers["date"] = {formatHttpDate()};
+    }
+    if (!hasHeader("connection") && m_conn && m_conn->hasContext()) {
+        std::shared_ptr<HTTPRequest> sp_request = m_conn->getContext<HTTPRequest>();
+        if (sp_request && sp_request->shouldCloseConnection()) {
+            m_headers["connection"] = {"close"};
+        }
     }
     ss << "HTTP/1.1 " << m_status_code << " " << msg << "\r\n";
     for (const auto& pair : m_headers) {
@@ -1457,6 +1690,11 @@ HTTPClientRequest::HTTPClientRequest(v8::Isolate* p_isolate, const std::string& 
       m_finished(false),
       m_executed(false),
       m_request_complete(false),
+      m_connection_ready(false),
+      m_request_headers_sent(false),
+      m_request_chunked(false),
+      m_end_requested(false),
+      m_request_body_finalized(false),
       m_gc_pending(false),
       m_network_ref_active(false),
       m_ref_count(1),
@@ -1519,6 +1757,7 @@ void HTTPClientRequest::release() {
 }
 
 void HTTPClientRequest::destroyRequest() {
+    std::lock_guard<std::recursive_mutex> lock(m_request_mutex);
     if (m_destroyed) {
         return;
     }
@@ -1546,7 +1785,67 @@ void HTTPClientRequest::setTimeout(int32_t timeout_ms) {
     m_timeout_ms = timeout_ms;
 }
 
+void HTTPClientRequest::sendRequestHeaders() {
+    std::lock_guard<std::recursive_mutex> lock(m_request_mutex);
+    if (!m_connection_ready || !m_connection || m_request_headers_sent) {
+        return;
+    }
+
+    std::ostringstream req;
+    req << m_method << " " << m_path << " HTTP/1.1\r\n";
+    for (const auto& pair : m_headers) {
+        req << pair.first << ": " << pair.second << "\r\n";
+    }
+    req << "\r\n";
+    m_connection->send(req.str());
+    m_request_headers_sent = true;
+}
+
+void HTTPClientRequest::sendRequestBodyData(const std::string& data) {
+    std::lock_guard<std::recursive_mutex> lock(m_request_mutex);
+    if (!m_connection_ready || !m_connection || data.empty()) {
+        return;
+    }
+
+    if (m_request_chunked) {
+        std::ostringstream chunk;
+        chunk << std::hex << data.size() << "\r\n";
+        chunk << data << "\r\n";
+        m_connection->send(chunk.str());
+        return;
+    }
+
+    m_connection->send(data);
+}
+
+void HTTPClientRequest::flushPendingRequestBody() {
+    std::lock_guard<std::recursive_mutex> lock(m_request_mutex);
+    if (!m_request_headers_sent || m_body.empty()) {
+        return;
+    }
+
+    std::string pending = std::move(m_body);
+    m_body.clear();
+    sendRequestBodyData(pending);
+}
+
+void HTTPClientRequest::finalizeRequestBody() {
+    std::lock_guard<std::recursive_mutex> lock(m_request_mutex);
+    if (!m_connection_ready || !m_request_headers_sent || !m_end_requested || m_request_body_finalized) {
+        return;
+    }
+
+    flushPendingRequestBody();
+    if (m_request_chunked && m_connection) {
+        m_connection->send("0\r\n\r\n");
+    }
+    m_request_body_finalized = true;
+}
+
 void HTTPClientRequest::setHeader(const std::string& name, const std::string& value) {
+    if (!isValidHeaderName(name) || !isValidHeaderValue(value)) {
+        return;
+    }
     std::string normalized_name = normalizeHeaderName(name);
     if (!hasHeader(normalized_name)) {
         m_raw_header_names.push_back(name);
@@ -1635,7 +1934,20 @@ void HTTPClientRequest::write(const v8::FunctionCallbackInfo<v8::Value>& args) {
     if (p_self && args.Length() > 0) {
         std::string data;
         if (readBinaryValue(args.GetIsolate(), args[0], &data)) {
+            std::lock_guard<std::recursive_mutex> lock(p_self->m_request_mutex);
+            if (p_self->m_finished) {
+                return;
+            }
+            if (p_self->m_executed && !p_self->m_request_chunked &&
+                p_self->m_headers.find("content-length") == p_self->m_headers.end() &&
+                p_self->m_headers.find("transfer-encoding") == p_self->m_headers.end()) {
+                p_self->m_headers["transfer-encoding"] = "chunked";
+                p_self->m_request_chunked = true;
+            }
             p_self->m_body += data;
+            if (p_self->m_executed && p_self->m_request_headers_sent) {
+                p_self->flushPendingRequestBody();
+            }
         }
     }
 }
@@ -1645,13 +1957,35 @@ void HTTPClientRequest::end(const v8::FunctionCallbackInfo<v8::Value>& args) {
     if (!p_self) {
         return;
     }
+    {
+        std::lock_guard<std::recursive_mutex> lock(p_self->m_request_mutex);
+        if (p_self->m_finished) {
+            return;
+        }
+    }
     if (args.Length() > 0) {
         std::string data;
         if (readBinaryValue(args.GetIsolate(), args[0], &data)) {
+            std::lock_guard<std::recursive_mutex> lock(p_self->m_request_mutex);
             p_self->m_body += data;
         }
     }
-    p_self->execute();
+    {
+        std::lock_guard<std::recursive_mutex> lock(p_self->m_request_mutex);
+        p_self->m_end_requested = true;
+        p_self->m_finished = true;
+    }
+    if (!p_self->m_js_object.IsEmpty()) {
+        v8::Local<v8::Context> context = args.GetIsolate()->GetCurrentContext();
+        v8::Local<v8::Object> js_obj = p_self->m_js_object.Get(args.GetIsolate());
+        js_obj->Set(context, v8::String::NewFromUtf8Literal(args.GetIsolate(), "finished"), v8::Boolean::New(args.GetIsolate(), true)).Check();
+        js_obj->Set(context, v8::String::NewFromUtf8Literal(args.GetIsolate(), "writableEnded"), v8::Boolean::New(args.GetIsolate(), true)).Check();
+        js_obj->Set(context, v8::String::NewFromUtf8Literal(args.GetIsolate(), "writableFinished"), v8::Boolean::New(args.GetIsolate(), true)).Check();
+    }
+    p_self->execute(false);
+    if (p_self->m_executed) {
+        p_self->finalizeRequestBody();
+    }
 }
 
 void HTTPClientRequest::destroy(const v8::FunctionCallbackInfo<v8::Value>& args) {
@@ -1665,8 +1999,8 @@ void HTTPClientRequest::destroy(const v8::FunctionCallbackInfo<v8::Value>& args)
 
 void HTTPClientRequest::flushHeaders(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto* p_self = unwrapExternalPointer<HTTPClientRequest>(args.This());
-    if (p_self) {
-        p_self->execute();
+    if (p_self && !p_self->m_executed) {
+        p_self->execute(true);
     }
 }
 
@@ -1796,9 +2130,42 @@ void HTTPClientRequest::scheduleDelete() {
 }
 
 void HTTPClientRequest::execute() {
+    execute(false);
+}
+
+void HTTPClientRequest::execute(bool headers_only) {
+    std::lock_guard<std::recursive_mutex> lock(m_request_mutex);
     if (m_executed) {
+        if (!headers_only) {
+            if (!m_request_chunked &&
+                m_headers.find("content-length") == m_headers.end() &&
+                m_headers.find("transfer-encoding") == m_headers.end()) {
+                m_headers["transfer-encoding"] = "chunked";
+                m_request_chunked = true;
+            }
+            finalizeRequestBody();
+        }
         return;
     }
+
+    if (headers_only) {
+        if (m_headers.find("content-length") == m_headers.end() &&
+            m_headers.find("transfer-encoding") == m_headers.end()) {
+            m_headers["transfer-encoding"] = "chunked";
+            m_request_chunked = true;
+        }
+    } else {
+        auto transfer_encoding = m_headers.find("transfer-encoding");
+        if (transfer_encoding != m_headers.end() && transfer_encoding->second == "chunked") {
+            m_request_chunked = true;
+        } else if (!m_body.empty() && m_headers.find("content-length") == m_headers.end()) {
+            m_headers["content-length"] = std::to_string(m_body.length());
+        }
+    }
+    if (m_headers.find("transfer-encoding") != m_headers.end() && m_headers["transfer-encoding"] == "chunked") {
+        m_request_chunked = true;
+    }
+
     m_executed = true;
     retain();
     m_network_ref_active.store(true, std::memory_order_release);
@@ -1810,18 +2177,6 @@ void HTTPClientRequest::execute() {
     trantor::InetAddress serverAddr(m_host, m_port);
     sp_tcp_client = std::make_shared<trantor::TcpClient>(p_loop, serverAddr, "HTTPClient_" + m_host);
 
-    std::ostringstream req;
-    req << m_method << " " << m_path << " HTTP/1.1\r\n";
-    if (!m_body.empty() && m_headers.find("content-length") == m_headers.end()) {
-        m_headers["content-length"] = std::to_string(m_body.length());
-    }
-    for (const auto& pair : m_headers) {
-        req << pair.first << ": " << pair.second << "\r\n";
-    }
-    req << "\r\n";
-    req << m_body;
-
-    std::string request_str = req.str();
     auto queue_disconnect = [this](bool emit_error) {
         bool should_emit_error = emit_error && !m_request_complete && !m_error_emitted;
         bool should_emit_close = !m_close_emitted;
@@ -1889,10 +2244,22 @@ void HTTPClientRequest::execute() {
         releaseNetworkReference();
     };
 
-    sp_tcp_client->setConnectionCallback([this, request_str, queue_disconnect](const trantor::TcpConnectionPtr& conn) {
+    sp_tcp_client->setConnectionCallback([this, queue_disconnect](const trantor::TcpConnectionPtr& conn) {
         if (conn->connected()) {
-            conn->send(request_str);
+            {
+                std::lock_guard<std::recursive_mutex> lock(m_request_mutex);
+                m_connection = conn;
+                m_connection_ready = true;
+            }
+            sendRequestHeaders();
+            flushPendingRequestBody();
+            finalizeRequestBody();
         } else {
+            {
+                std::lock_guard<std::recursive_mutex> lock(m_request_mutex);
+                m_connection_ready = false;
+                m_connection.reset();
+            }
             queue_disconnect(true);
         }
     });
@@ -1933,7 +2300,6 @@ void HTTPClientRequest::execute() {
         
         llhttp_errno_t err = llhttp_execute(&m_parser, data.data(), data.length());
         if (err != HPE_OK) {
-            std::cerr << "llhttp parse error in client: " << llhttp_errno_name(err) << std::endl;
             conn->forceClose();
         }
     });
@@ -2182,26 +2548,9 @@ void HTTP::request(const v8::FunctionCallbackInfo<v8::Value>& args) {
     if (args[0]->IsString()) {
         v8::String::Utf8Value url_v(p_isolate, args[0]);
         std::string url_str = *url_v;
-
-        if (url_str.find("http://") == 0) {
-            url_str = url_str.substr(7);
-        }
-        size_t slash_pos = url_str.find_first_of('/');
-        if (slash_pos != std::string::npos) {
-            path = url_str.substr(slash_pos);
-            host = url_str.substr(0, slash_pos);
-        } else {
-            host = url_str;
-            path = "/";
-        }
-        
-        size_t colon_pos = host.find(':');
-        if (colon_pos != std::string::npos) {
-            if (!tryParsePort(host.substr(colon_pos + 1), &port)) {
-                p_isolate->ThrowException(v8::Exception::TypeError(v8::String::NewFromUtf8Literal(p_isolate, "Invalid port in URL")));
-                return;
-            }
-            host = host.substr(0, colon_pos);
+        if (!parseHttpUrl(url_str, &host, &port, &path)) {
+            p_isolate->ThrowException(v8::Exception::TypeError(v8::String::NewFromUtf8Literal(p_isolate, "Invalid URL")));
+            return;
         }
 
         if (args.Length() > 1 && args[1]->IsObject() && !args[1]->IsFunction()) {
@@ -2261,6 +2610,11 @@ void HTTP::request(const v8::FunctionCallbackInfo<v8::Value>& args) {
         if (args.Length() > 1 && args[1]->IsFunction()) {
             callback = args[1].As<v8::Function>();
         }
+    }
+
+    if (!isValidRequestHost(host) || !isValidRequestPath(path)) {
+        p_isolate->ThrowException(v8::Exception::TypeError(v8::String::NewFromUtf8Literal(p_isolate, "Invalid request target")));
+        return;
     }
 
     HTTPClientRequest* p_client = new HTTPClientRequest(p_isolate, method, host, port, path, headers, callback);

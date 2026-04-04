@@ -55,7 +55,7 @@ private:
     v8::Global<v8::Object> m_server_obj;
     v8::Global<v8::Function> m_request_handler;
     
-    bool m_listening;
+    std::atomic<bool> m_listening;
     bool m_disposed;
     std::atomic<bool> m_gc_pending;
     std::atomic<int32_t> m_ref_count;
@@ -102,9 +102,11 @@ public:
     void appendHeaderValue(const char* p_data, size_t length);
     void finishPendingHeader();
     void addHeader(const std::string& name, const std::string& value);
+    bool appendBodyChunk(const char* p_data, size_t length);
     void setConnection(const trantor::TcpConnectionPtr& conn);
     void markDestroyed();
     bool isDestroyed() const { return m_destroyed; }
+    bool shouldCloseConnection() const;
     void destroy();
 
     const std::string& getMethod() const { return m_method; }
@@ -129,6 +131,8 @@ private:
     std::string m_url;
     trantor::TcpConnectionPtr m_conn;
     bool m_destroyed;
+    size_t m_header_count;
+    size_t m_body_size;
     std::map<std::string, std::vector<std::string>> m_header_values;
     std::vector<std::string> m_raw_headers;
     HeaderParseState m_last_header_state;
@@ -214,6 +218,7 @@ public:
     void emitClose();
     void destroyRequest();
     void setTimeout(int32_t timeout_ms);
+    void execute(bool headers_only);
     void setHeader(const std::string& name, const std::string& value);
     bool hasHeader(const std::string& name) const;
     std::string getHeader(const std::string& name) const;
@@ -279,16 +284,23 @@ private:
     llhttp_t m_parser;
     llhttp_settings_t m_settings;
     std::shared_ptr<trantor::TcpClient> sp_tcp_client;
+    trantor::TcpConnectionPtr m_connection;
     std::unique_ptr<trantor::EventLoopThread> up_loop_thread;
     bool m_finished;
     bool m_executed;
     bool m_request_complete;
+    bool m_connection_ready;
+    bool m_request_headers_sent;
+    bool m_request_chunked;
+    bool m_end_requested;
+    bool m_request_body_finalized;
     std::atomic<bool> m_gc_pending;
     std::atomic<bool> m_network_ref_active;
     std::atomic<int32_t> m_ref_count;
     std::atomic<bool> m_delete_scheduled;
     bool m_destroyed;
     int32_t m_timeout_ms;
+    std::recursive_mutex m_request_mutex;
 
     v8::Global<v8::Object> m_js_object;
     v8::Global<v8::Object> m_response_obj;
@@ -298,6 +310,10 @@ private:
 
     void releaseNetworkReference();
     void scheduleDelete();
+    void sendRequestHeaders();
+    void sendRequestBodyData(const std::string& data);
+    void flushPendingRequestBody();
+    void finalizeRequestBody();
 };
 
 class HTTP {

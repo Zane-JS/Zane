@@ -36,6 +36,9 @@ public:
     void close(v8::Local<v8::Function> callback);
     void setRequestHandler(v8::Local<v8::Function> handler);
     void setJSObject(v8::Local<v8::Object> obj);
+    void retain();
+    void release();
+    void markGcPending() { m_gc_pending = true; }
     void markDisposed();
      
     v8::Isolate* getIsolate() { return p_isolate; }
@@ -52,11 +55,16 @@ private:
     
     bool m_listening;
     bool m_disposed;
+    std::atomic<bool> m_gc_pending;
+    std::atomic<int32_t> m_ref_count;
+    std::atomic<bool> m_delete_scheduled;
     int32_t m_port;
     std::string m_host;
     
-    std::unique_ptr<trantor::TcpServer> up_tcp_server;
     trantor::EventLoopThread m_loop_thread;
+    std::unique_ptr<trantor::TcpServer> up_tcp_server;
+
+    void scheduleDelete();
 };
 
 // HTTP Request using llhttp
@@ -148,8 +156,9 @@ public:
     void setStatusCode(int32_t code) { m_status_code = code; }
     std::string getStatusMessage() const { return m_status_message; }
     void setStatusMessage(const std::string& msg) { m_status_message = msg; }
+    void retain();
+    void release();
     void markGcPending() { m_gc_pending = true; }
-    bool canDeleteImmediately() const { return m_finished || !m_headers_sent; }
      
 private:
     v8::Isolate* p_isolate;
@@ -161,12 +170,15 @@ private:
     bool m_headers_sent;
     bool m_finished;
     bool m_use_chunked_encoding;
-    bool m_gc_pending;
+    std::atomic<bool> m_gc_pending;
+    std::atomic<int32_t> m_ref_count;
+    std::atomic<bool> m_delete_scheduled;
      
     void sendHeaders();
     void sendChunk(const std::string& data);
     void emit(const char* p_event_name);
     std::string getFirstHeaderValue(const std::string& name) const;
+    void scheduleDelete();
 };
 
 class HTTPClientRequest {
@@ -195,8 +207,9 @@ public:
     bool getFinished() const { return m_finished; }
     bool getExecuted() const { return m_executed; }
     bool isComplete() const { return m_request_complete; }
+    void retain();
+    void release();
     void markGcPending() { m_gc_pending = true; }
-    bool canDeleteImmediately() const { return !m_executed || m_request_complete; }
     void appendResponseHeaderField(const char* p_data, size_t length);
     void appendResponseHeaderValue(const char* p_data, size_t length);
     void finishPendingResponseHeader();
@@ -250,11 +263,17 @@ private:
     bool m_finished;
     bool m_executed;
     bool m_request_complete;
-    bool m_gc_pending;
+    std::atomic<bool> m_gc_pending;
+    std::atomic<bool> m_network_ref_active;
+    std::atomic<int32_t> m_ref_count;
+    std::atomic<bool> m_delete_scheduled;
 
     v8::Global<v8::Object> m_js_object;
     v8::Global<v8::Object> m_response_obj;
     v8::Global<v8::Function> m_response_callback;
+
+    void releaseNetworkReference();
+    void scheduleDelete();
 };
 
 class HTTP {

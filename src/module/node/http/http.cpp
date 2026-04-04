@@ -29,6 +29,15 @@ T* unwrapExternalPointer(v8::Local<v8::Object> obj) {
     return static_cast<T*>(obj->GetAlignedPointerFromInternalField(0, v8::kEmbedderDataTypeTagDefault));
 }
 
+template <typename T>
+void enqueueDeferredDelete(T* p_object) {
+    Task* p_task = new Task();
+    p_task->m_runner = [p_object](v8::Isolate* p_isolate, v8::Local<v8::Context> context, Task* p_task) {
+        delete p_object;
+    };
+    TaskQueue::getInstance().enqueue(p_task);
+}
+
 std::string normalizeHeaderName(const std::string& name) {
     std::string normalized = name;
     for (char& c : normalized) {
@@ -221,9 +230,7 @@ void weakDeleteResponse(const v8::WeakCallbackInfo<HTTPResponse>& info) {
     }
 
     p_response->markGcPending();
-    if (p_response->canDeleteImmediately()) {
-        delete p_response;
-    }
+    p_response->release();
 }
 
 void weakDeleteServer(const v8::WeakCallbackInfo<HTTPServer>& info) {
@@ -232,8 +239,9 @@ void weakDeleteServer(const v8::WeakCallbackInfo<HTTPServer>& info) {
         return;
     }
 
+    p_server->markGcPending();
     p_server->markDisposed();
-    delete p_server;
+    p_server->release();
 }
 
 void weakDeleteClientRequest(const v8::WeakCallbackInfo<HTTPClientRequest>& info) {
@@ -243,9 +251,7 @@ void weakDeleteClientRequest(const v8::WeakCallbackInfo<HTTPClientRequest>& info
     }
 
     p_request->markGcPending();
-    if (p_request->canDeleteImmediately()) {
-        delete p_request;
-    }
+    p_request->release();
 }
 
 } // namespace
@@ -295,7 +301,13 @@ static int32_t on_message_complete(llhttp_t* p_parser) {
 
 // HTTPServer Implementation
 HTTPServer::HTTPServer(v8::Isolate* p_isolate)
-    : p_isolate(p_isolate), m_listening(false), m_disposed(false), m_port(0) {
+    : p_isolate(p_isolate),
+      m_listening(false),
+      m_disposed(false),
+      m_gc_pending(false),
+      m_ref_count(1),
+      m_delete_scheduled(false),
+      m_port(0) {
 }
 
 HTTPServer::~HTTPServer() {
@@ -312,6 +324,17 @@ void HTTPServer::markDisposed() {
     m_disposed = true;
 }
 
+void HTTPServer::retain() {
+    m_ref_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void HTTPServer::release() {
+    int32_t ref_count = m_ref_count.fetch_sub(1, std::memory_order_acq_rel) - 1;
+    if (ref_count == 0 && m_gc_pending.load(std::memory_order_acquire)) {
+        scheduleDelete();
+    }
+}
+
 void HTTPServer::setRequestHandler(v8::Local<v8::Function> handler) {
     m_request_handler.Reset(p_isolate, handler);
 }
@@ -321,11 +344,21 @@ void HTTPServer::setJSObject(v8::Local<v8::Object> obj) {
     m_server_obj.SetWeak(this, weakDeleteServer, v8::WeakCallbackType::kParameter);
 }
 
+void HTTPServer::scheduleDelete() {
+    bool expected = false;
+    if (!m_delete_scheduled.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return;
+    }
+
+    enqueueDeferredDelete(this);
+}
+
 void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Function> callback) {
     if (m_listening) return;
 
     m_port = port;
     m_host = host;
+    retain();
     
     // Configure Trantor loop and server
     trantor::EventLoop* p_loop = m_loop_thread.getLoop();
@@ -362,6 +395,7 @@ void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Fun
         // Process pending events by queueing a task to the Main Thread
         auto events = sp_request->popEvents();
         if (!events.empty()) {
+            retain();
             Task* p_task = new Task();
             p_task->m_runner = [this, sp_request, p_conn, events](v8::Isolate* p_isolate, v8::Local<v8::Context> context, Task* p_task) {
                 v8::HandleScope handle_scope(p_isolate);
@@ -431,6 +465,7 @@ void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Fun
                         }
                     }
                 }
+                release();
             };
             TaskQueue::getInstance().enqueue(p_task);
         }
@@ -476,6 +511,7 @@ void HTTPServer::close(v8::Local<v8::Function> callback) {
         v8::Local<v8::Context> p_context = p_isolate->GetCurrentContext();
         (void)callback->Call(p_context, p_context->Global(), 0, nullptr);
     }
+    release();
 }
 
 // HTTPRequest Implementation
@@ -653,10 +689,22 @@ v8::Local<v8::Object> HTTPRequest::toObject() {
 // HTTPResponse Implementation
 HTTPResponse::HTTPResponse(v8::Isolate* p_isolate, const trantor::TcpConnectionPtr& p_conn)
     : p_isolate(p_isolate), m_conn(p_conn), m_status_code(200),
-      m_headers_sent(false), m_finished(false), m_use_chunked_encoding(false), m_gc_pending(false) {}
+      m_headers_sent(false), m_finished(false), m_use_chunked_encoding(false),
+      m_gc_pending(false), m_ref_count(2), m_delete_scheduled(false) {}
 
 HTTPResponse::~HTTPResponse() {
     m_res_obj.Reset();
+}
+
+void HTTPResponse::retain() {
+    m_ref_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void HTTPResponse::release() {
+    int32_t ref_count = m_ref_count.fetch_sub(1, std::memory_order_acq_rel) - 1;
+    if (ref_count == 0 && m_gc_pending.load(std::memory_order_acquire)) {
+        scheduleDelete();
+    }
 }
 
 v8::Local<v8::Object> HTTPResponse::toObject() {
@@ -863,9 +911,7 @@ void HTTPResponse::end(const std::string& data) {
 
     m_finished = true;
     emit("finish");
-    if (m_gc_pending) {
-        delete this;
-    }
+    release();
 }
 
 void HTTPResponse::sendHeaders() {
@@ -914,6 +960,15 @@ void HTTPResponse::emit(const char* p_event_name) {
         v8::String::NewFromUtf8(p_isolate, p_event_name).ToLocalChecked()
     };
     (void)emit_val.As<v8::Function>()->Call(p_context, res_obj, 1, emit_args);
+}
+
+void HTTPResponse::scheduleDelete() {
+    bool expected = false;
+    if (!m_delete_scheduled.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return;
+    }
+
+    enqueueDeferredDelete(this);
 }
 
 std::string HTTPResponse::getFirstHeaderValue(const std::string& name) const {
@@ -1226,7 +1281,10 @@ HTTPClientRequest::HTTPClientRequest(v8::Isolate* isolate, const std::string& me
       m_finished(false),
       m_executed(false),
       m_request_complete(false),
-      m_gc_pending(false) {
+      m_gc_pending(false),
+      m_network_ref_active(false),
+      m_ref_count(1),
+      m_delete_scheduled(false) {
     if (!callback.IsEmpty()) {
         m_response_callback.Reset(p_isolate, callback);
     }
@@ -1266,6 +1324,17 @@ HTTPClientRequest::HTTPClientRequest(v8::Isolate* isolate, const std::string& me
 HTTPClientRequest::~HTTPClientRequest() {
     if (sp_tcp_client) {
         sp_tcp_client->disconnect();
+    }
+}
+
+void HTTPClientRequest::retain() {
+    m_ref_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void HTTPClientRequest::release() {
+    int32_t ref_count = m_ref_count.fetch_sub(1, std::memory_order_acq_rel) - 1;
+    if (ref_count == 0 && m_gc_pending.load(std::memory_order_acquire)) {
+        scheduleDelete();
     }
 }
 
@@ -1465,11 +1534,31 @@ void HTTPClientRequest::getRawHeaderNames(const v8::FunctionCallbackInfo<v8::Val
     args.GetReturnValue().Set(result);
 }
 
+void HTTPClientRequest::releaseNetworkReference() {
+    bool expected = true;
+    if (!m_network_ref_active.compare_exchange_strong(expected, false, std::memory_order_acq_rel)) {
+        return;
+    }
+
+    release();
+}
+
+void HTTPClientRequest::scheduleDelete() {
+    bool expected = false;
+    if (!m_delete_scheduled.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return;
+    }
+
+    enqueueDeferredDelete(this);
+}
+
 void HTTPClientRequest::execute() {
     if (m_executed) {
         return;
     }
     m_executed = true;
+    retain();
+    m_network_ref_active.store(true, std::memory_order_release);
 
     up_loop_thread = std::make_unique<trantor::EventLoopThread>();
     up_loop_thread->run();
@@ -1491,9 +1580,11 @@ void HTTPClientRequest::execute() {
 
     std::string request_str = req.str();
 
-    sp_tcp_client->setConnectionCallback([request_str](const trantor::TcpConnectionPtr& conn) {
+    sp_tcp_client->setConnectionCallback([this, request_str](const trantor::TcpConnectionPtr& conn) {
         if (conn->connected()) {
             conn->send(request_str);
+        } else {
+            releaseNetworkReference();
         }
     });
 
@@ -1537,10 +1628,12 @@ int32_t HTTPClientRequest::onHeaderValue(llhttp_t* p_parser, const char* p_at, s
 int32_t HTTPClientRequest::onHeadersComplete(llhttp_t* p_parser) {
     auto* p_self = static_cast<HTTPClientRequest*>(p_parser->data);
     p_self->finishPendingResponseHeader();
+    p_self->retain();
     
     Task* p_task = new Task();
     p_task->m_runner = [p_self](v8::Isolate* p_isolate, v8::Local<v8::Context> context, Task* p_task) {
         p_self->emitResponse();
+        p_self->release();
     };
     TaskQueue::getInstance().enqueue(p_task);
     
@@ -1550,10 +1643,12 @@ int32_t HTTPClientRequest::onHeadersComplete(llhttp_t* p_parser) {
 int32_t HTTPClientRequest::onBody(llhttp_t* p_parser, const char* p_at, size_t length) {
     auto* p_self = static_cast<HTTPClientRequest*>(p_parser->data);
     std::string data(p_at, length);
+    p_self->retain();
     
     Task* p_task = new Task();
     p_task->m_runner = [p_self, data](v8::Isolate* p_isolate, v8::Local<v8::Context> context, Task* p_task) {
         p_self->emitData(data);
+        p_self->release();
     };
     TaskQueue::getInstance().enqueue(p_task);
     
@@ -1562,10 +1657,12 @@ int32_t HTTPClientRequest::onBody(llhttp_t* p_parser, const char* p_at, size_t l
 
 int32_t HTTPClientRequest::onMessageComplete(llhttp_t* p_parser) {
     auto* p_self = static_cast<HTTPClientRequest*>(p_parser->data);
+    p_self->retain();
     
     Task* p_task = new Task();
     p_task->m_runner = [p_self](v8::Isolate* p_isolate, v8::Local<v8::Context> context, Task* p_task) {
         p_self->emitEnd();
+        p_self->release();
     };
     TaskQueue::getInstance().enqueue(p_task);
     
@@ -1672,8 +1769,8 @@ void HTTPClientRequest::emitEnd() {
     m_js_object.Reset();
     m_response_obj.Reset();
     m_response_callback.Reset();
-    if (m_gc_pending) {
-        delete this;
+    if (sp_tcp_client) {
+        sp_tcp_client->disconnect();
     }
 }
 

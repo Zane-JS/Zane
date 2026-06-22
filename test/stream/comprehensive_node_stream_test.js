@@ -23,7 +23,7 @@ async function runTest(name, fn) {
 
 async function start() {
     console.log('====================================================');
-    console.log('      Z8 COMPREHENSIVE STREAM TEST SUITE v24');
+    console.log('      Zane COMPREHENSIVE STREAM TEST SUITE v24');
     console.log('====================================================\n');
 
     // 1. Core Readable & Static Methods
@@ -32,12 +32,12 @@ async function start() {
         let data = '';
         source.on('data', chunk => data += chunk);
         await new Promise(r => source.on('end', r));
-        assert.strictEqual(data, 'z8 ', 'Data mismatch');
+        assert.strictEqual(data, 'zane ', 'Data mismatch');
     });
 
     // 2. Async Iteration & Disposal
     await runTest('AsyncIterator & AsyncDispose', async () => {
-        const items = ['power', 'of', 'z8'];
+        const items = ['power', 'of', 'zane'];
         const stream = Readable.from(items);
         const collected = [];
         for await (const chunk of stream) {
@@ -165,18 +165,18 @@ async function start() {
         });
 
         const combined = compose(upper, exclamation);
-        combined.write('z8');
+        combined.write('zane');
         
         const out = await new Promise(r => {
             combined.on('data', data => r(data.toString()));
         });
-        assert.strictEqual(out, 'Z8!', 'compose() failed');
+        assert.strictEqual(out, 'Zane!', 'compose() failed');
     });
 
     console.log('\n====================================================');
     console.log('      ALL 9 MAJOR STREAM FEATURE SUITES PASSED!      ');
     console.log('====================================================');
-    console.log('Z8 is now fully compliant with Node.js v24.x Stream spec.');
+    console.log('Zane is now fully compliant with Node.js v24.x Stream spec.');
 }
 
 start().catch(err => {

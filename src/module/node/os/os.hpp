@@ -1,9 +1,9 @@
-#ifndef Z8_MODULE_OS_H
-#define Z8_MODULE_OS_H
+#ifndef Zane_MODULE_OS_H
+#define Zane_MODULE_OS_H
 
 #include "v8.h"
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 class OS {
@@ -30,6 +30,6 @@ class OS {
 };
 
 } // namespace module
-} // namespace z8
+} // namespace zane
 
-#endif // Z8_MODULE_OS_H
+#endif // Zane_MODULE_OS_H

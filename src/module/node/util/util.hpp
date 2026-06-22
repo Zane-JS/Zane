@@ -1,11 +1,11 @@
-#ifndef Z8_MODULE_UTIL_H
-#define Z8_MODULE_UTIL_H
+#ifndef Zane_MODULE_UTIL_H
+#define Zane_MODULE_UTIL_H
 
 #include "v8.h"
 #include <cstdio>
 #include <string>
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 class Util {
@@ -67,6 +67,6 @@ class Util {
 };
 
 } // namespace module
-} // namespace z8
+} // namespace zane
 
-#endif // Z8_MODULE_UTIL_H
+#endif // Zane_MODULE_UTIL_H

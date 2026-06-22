@@ -1,5 +1,5 @@
-#ifndef Z8_MODULE_FS_H
-#define Z8_MODULE_FS_H
+#ifndef ZANE_MODULE_FS_H
+#define Zane_MODULE_FS_H
 
 #include "v8.h"
 #include <cstdint>
@@ -7,7 +7,7 @@
 #include <string>
 #include <system_error>
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 class FS {
@@ -147,6 +147,6 @@ class FS {
 };
 
 } // namespace module
-} // namespace z8
+} // namespace zane
 
 #endif

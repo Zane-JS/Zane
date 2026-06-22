@@ -1,5 +1,5 @@
-#ifndef Z8_THREAD_POOL_H
-#define Z8_THREAD_POOL_H
+#ifndef Zane_THREAD_POOL_H
+#define Zane_THREAD_POOL_H
 
 #include <condition_variable>
 #include <cstdint>
@@ -10,7 +10,7 @@
 #include <thread>
 #include <vector>
 
-namespace z8 {
+namespace zane {
 
 class ThreadPool {
   public:
@@ -84,6 +84,6 @@ class ThreadPool {
     int32_t m_active_tasks;
 };
 
-} // namespace z8
+} // namespace zane
 
 #endif

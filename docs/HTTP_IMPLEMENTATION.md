@@ -1,14 +1,14 @@
-# Z8 HTTP Implementation with Native IOCP
+# Zane HTTP Implementation with Native IOCP
 
 ## Overview
 
-Z8 now has a fully functional `node:http` module powered by native Windows IOCP (I/O Completion Ports), providing high-performance HTTP server capabilities without any libuv dependency.
+Zane now has a fully functional `node:http` module powered by native Windows IOCP (I/O Completion Ports), providing high-performance HTTP server capabilities without any libuv dependency.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     Z8 JavaScript Runtime                    │
+│                     Zane JavaScript Runtime                    │
 ├─────────────────────────────────────────────────────────────┤
 │  node:http Module (http.cpp)                                │
 │    ├─ HTTPServer                                            │
@@ -88,10 +88,10 @@ const server = http.createServer((req, res) => {
     
     res.writeHead(200, {
         'Content-Type': 'text/plain',
-        'X-Powered-By': 'Z8-IOCP'
+        'X-Powered-By': 'Zane-IOCP'
     });
     
-    res.end('Hello from Z8!\n');
+    res.end('Hello from Zane!\n');
 });
 
 server.listen(3000, '127.0.0.1', () => {
@@ -131,7 +131,7 @@ std::thread([this]() {
 
 ### Event Loop Integration
 
-Z8's main event loop is kept alive using a timer:
+Zane's main event loop is kept alive using a timer:
 
 ```javascript
 setInterval(() => {
@@ -161,7 +161,7 @@ setInterval(() => {
 
 ```powershell
 # Run HTTP server
-.\z8.exe test_http_final.js
+.\zane.exe test_http_final.js
 
 # Test with curl
 curl http://127.0.0.1:3000
@@ -206,17 +206,17 @@ start http://127.0.0.1:3000
 
 ## Competitive Advantage
 
-Z8's native IOCP implementation provides a significant advantage over competitors:
+Zane's native IOCP implementation provides a significant advantage over competitors:
 
 - **vs Node.js**: 2x faster on Windows, native integration
-- **vs Bun**: Bun uses libuv on Windows, Z8 uses native IOCP
+- **vs Bun**: Bun uses libuv on Windows, Zane uses native IOCP
 - **vs Deno**: Similar to Node.js, uses Tokio which wraps libuv on Windows
 
-Z8 is the **only** JavaScript runtime with native Windows IOCP support, making it the fastest option for Windows server workloads.
+Zane is the **only** JavaScript runtime with native Windows IOCP support, making it the fastest option for Windows server workloads.
 
 ## Conclusion
 
-Z8's HTTP implementation with native IOCP represents a major milestone:
+Zane's HTTP implementation with native IOCP represents a major milestone:
 
 ✅ Full `node:http` API compatibility
 ✅ Native Windows performance

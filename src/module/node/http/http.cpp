@@ -16,7 +16,7 @@
 #include "../events/events.hpp"
 #include "../buffer/buffer.hpp"
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 std::atomic<int32_t> HTTPServer::m_active_servers{0};
@@ -379,7 +379,7 @@ bool readBinaryValue(v8::Isolate* p_isolate, v8::Local<v8::Value> value, std::st
 }
 
 v8::Local<v8::Value> createBufferValue(v8::Isolate* p_isolate, const std::string& data) {
-    v8::Local<v8::Uint8Array> buffer = z8::module::Buffer::createBuffer(p_isolate, data.size());
+    v8::Local<v8::Uint8Array> buffer = zane::module::Buffer::createBuffer(p_isolate, data.size());
     if (!data.empty()) {
         std::memcpy(buffer->Buffer()->GetBackingStore()->Data(), data.data(), data.size());
     }
@@ -551,7 +551,7 @@ void HTTPServer::listen(int32_t port, const std::string& host, v8::Local<v8::Fun
     m_loop_thread.run();
 
     trantor::InetAddress addr(host, (uint16_t)port);
-    up_tcp_server = std::make_unique<trantor::TcpServer>(p_loop, addr, "z8_http_server");
+    up_tcp_server = std::make_unique<trantor::TcpServer>(p_loop, addr, "zane_http_server");
     up_tcp_server->kickoffIdleConnections(kServerIdleTimeoutSeconds);
     
     // Set thread num for performance (use all cores)
@@ -2636,4 +2636,4 @@ void HTTP::get(const v8::FunctionCallbackInfo<v8::Value>& args) {
 }
 
 } // namespace module
-} // namespace z8
+} // namespace zane

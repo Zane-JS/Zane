@@ -11,7 +11,7 @@ import process from "node:process";
 ### `process.env`
 
 The `process.env` property returns an object containing the user environment.
-Z8 extension: Z8 automatically loads environment variables from a `.env` file in the current working directory if it exists (dotenv functionality).
+Zane extension: Zane automatically loads environment variables from a `.env` file in the current working directory if it exists (dotenv functionality).
 
 ```js
 console.log(process.env.PATH);
@@ -28,7 +28,7 @@ Returns a string identifying the operating system platform.
 
 ### `process.arch`
 
-Returns the operating system CPU architecture for which the Z8 binary was compiled.
+Returns the operating system CPU architecture for which the Zane binary was compiled.
 
 - `'x64'`
 - `'ia32'`
@@ -37,11 +37,11 @@ Returns the operating system CPU architecture for which the Z8 binary was compil
 
 ### `process.version`
 
-The `process.version` property returns the Z8 version string.
+The `process.version` property returns the Zane version string.
 
 ### `process.versions`
 
-Returns an object listing the version strings of Z8 and its dependencies (like V8).
+Returns an object listing the version strings of Zane and its dependencies (like V8).
 
 ### `process.execPath`
 
@@ -53,11 +53,11 @@ Returns the PID of the process.
 
 ### `process.argv`
 
-An array containing the command-line arguments passed when the Z8 process was launched.
+An array containing the command-line arguments passed when the Zane process was launched.
 
 ### `process.argv0`
 
-Contains a read-only copy of the original value of `argv[0]` passed when Z8 was launched.
+Contains a read-only copy of the original value of `argv[0]` passed when Zane was launched.
 
 ### `process.title`
 
@@ -99,7 +99,7 @@ Sends a signal to a process.
 
 ### `process.memoryUsage()`
 
-Returns an object describing the memory usage of the Z8 process.
+Returns an object describing the memory usage of the Zane process.
 
 ### `process.cpuUsage([previousValue])`
 

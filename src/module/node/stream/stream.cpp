@@ -10,7 +10,7 @@ static void StreamWeakCallback(const v8::WeakCallbackInfo<T>& data) {
     delete data.GetParameter();
 }
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 v8::Persistent<v8::FunctionTemplate> Stream::m_readable_tmpl;
@@ -360,7 +360,7 @@ struct ReadableFromTaskData {
 };
 
 // The runner function for the TaskQueue for Readable.from
-static void ReadableFromTaskRunner(v8::Isolate* p_isolate, v8::Local<v8::Context> context, z8::Task* p_task) {
+static void ReadableFromTaskRunner(v8::Isolate* p_isolate, v8::Local<v8::Context> context, zane::Task* p_task) {
     v8::HandleScope handle_scope(p_isolate);
     v8::Context::Scope context_scope(context);
 
@@ -379,11 +379,11 @@ static void ReadableFromTaskRunner(v8::Isolate* p_isolate, v8::Local<v8::Context
         p_data->m_index++;
 
         // Re-enqueue the task to push the next chunk
-        z8::Task* p_next_task = new z8::Task();
+        zane::Task* p_next_task = new zane::Task();
         p_next_task->p_data = p_data;
         p_next_task->m_runner = ReadableFromTaskRunner;
         p_next_task->m_is_promise = false;
-        z8::TaskQueue::getInstance().enqueue(p_next_task);
+        zane::TaskQueue::getInstance().enqueue(p_next_task);
     } else {
         // End of data, push null
         v8::Local<v8::Value> argv[] = { v8::Null(p_isolate) };
@@ -443,11 +443,11 @@ void Stream::readableFrom(const v8::FunctionCallbackInfo<v8::Value>& args) {
                     // Enqueue tasks to push data asynchronously
                     if (!data.empty() || true) { // Always push null even if empty
                         ReadableFromTaskData* p_data = new ReadableFromTaskData(p_isolate, readable, std::move(data));
-                        z8::Task* p_task = new z8::Task();
+                        zane::Task* p_task = new zane::Task();
                         p_task->p_data = p_data;
                         p_task->m_runner = ReadableFromTaskRunner;
                         p_task->m_is_promise = false;
-                        z8::TaskQueue::getInstance().enqueue(p_task);
+                        zane::TaskQueue::getInstance().enqueue(p_task);
                     }
                 }
             }
@@ -3244,7 +3244,7 @@ struct StreamResumeTaskData {
     ~StreamResumeTaskData() { m_stream.Reset(); }
 };
 
-static void StreamResumeTaskRunner(v8::Isolate* p_isolate, v8::Local<v8::Context> context, z8::Task* p_task) {
+static void StreamResumeTaskRunner(v8::Isolate* p_isolate, v8::Local<v8::Context> context, zane::Task* p_task) {
     v8::HandleScope handle_scope(p_isolate);
     v8::Context::Scope context_scope(context);
     StreamResumeTaskData* p_data = static_cast<StreamResumeTaskData*>(p_task->p_data);
@@ -3376,11 +3376,11 @@ void Stream::readableIterator(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
             // Force flow
             StreamResumeTaskData* p_res_data = new StreamResumeTaskData(p_isolate, stream);
-            z8::Task* p_res_task = new z8::Task();
+            zane::Task* p_res_task = new zane::Task();
             p_res_task->p_data = p_res_data;
             p_res_task->m_runner = StreamResumeTaskRunner;
             p_res_task->m_is_promise = false;
-            z8::TaskQueue::getInstance().enqueue(p_res_task);
+            zane::TaskQueue::getInstance().enqueue(p_res_task);
         } else {
             // Immediate resolve if can't listen
             v8::Local<v8::Object> result = v8::Object::New(p_isolate);
@@ -4000,4 +4000,4 @@ void Stream::duplexToWeb(const v8::FunctionCallbackInfo<v8::Value>& args) {
 }
 
 } // namespace module
-} // namespace z8
+} // namespace zane

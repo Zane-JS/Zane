@@ -1,10 +1,10 @@
-# Quy tắc viết mã nguồn (Coding Guidelines) cho Z8
+# Quy tắc viết mã nguồn (Coding Guidelines) cho Zane
 
-Tài liệu này quy định các tiêu chuẩn viết mã nguồn C++ trong dự án Z8 để đảm bảo tính đồng nhất, hiệu suất và khả năng bảo trì cao.
+Tài liệu này quy định các tiêu chuẩn viết mã nguồn C++ trong dự án Zane để đảm bảo tính đồng nhất, hiệu suất và khả năng bảo trì cao.
 
 ## 1. Định dạng mã nguồn (Code Formatting)
 
-Dự án Z8 sử dụng phong cách **K&R (Kernighan & Ritchie)** truyền thống.
+Dự án Zane sử dụng phong cách **K&R (Kernighan & Ritchie)** truyền thống.
 
 ### Quy tắc cơ bản:
 
@@ -35,7 +35,7 @@ void ExampleFunction(int32_t value) {
 
 ## 2. Kiểu dữ liệu số (Integer Types)
 
-Để đảm bảo tính nhất quán trên các nền tảng (Windows/Linux/macOS) và tránh các lỗi tràn số không mong muốn, dự án Z8 **luôn luôn** sử dụng các kiểu số xác định kích thước từ thư viện `<cstdint>`.
+Để đảm bảo tính nhất quán trên các nền tảng (Windows/Linux/macOS) và tránh các lỗi tràn số không mong muốn, dự án Zane **luôn luôn** sử dụng các kiểu số xác định kích thước từ thư viện `<cstdint>`.
 
 ### Quy tắc:
 
@@ -81,13 +81,13 @@ public:
 
 ## 3. Quy tắc đặt tên (Naming Conventions)
 
-Z8 áp dụng hệ thống đặt tên kết hợp giữa phong cách Modern C++ và các tiêu chuẩn an toàn từ NASA/Google để tối ưu hóa khả năng đọc mã nguồn.
+Zane áp dụng hệ thống đặt tên kết hợp giữa phong cách Modern C++ và các tiêu chuẩn an toàn từ NASA/Google để tối ưu hóa khả năng đọc mã nguồn.
 
 | Đối tượng                      | Quy tắc               | Ví dụ                          |
 | :----------------------------- | :-------------------- | :----------------------------- |
 | **Class / Struct**             | `PascalCase`          | `FileStream`, `TaskRunner`     |
 | **Hàm / Phương thức**          | `camelCase`           | `openFile()`, `readFileSync()` |
-| **Namespace**                  | `snake_case`          | `z8::module_fs`                |
+| **Namespace**                  | `snake_case`          | `zane::module_fs`                |
 | **Biến cục bộ**                | `snake_case`          | `buffer_size`, `bytes_read`    |
 | **Biến thành viên (Member)**   | `m_snake_case`        | `m_file_handle`, `m_is_open`   |
 | **Biến con trỏ (Raw Pointer)** | `p_snake_case`        | `p_isolate`, `p_context`       |
@@ -99,7 +99,7 @@ Z8 áp dụng hệ thống đặt tên kết hợp giữa phong cách Modern C++
 ### Ví dụ minh họa:
 
 ```cpp
-namespace z8::module_fs {
+namespace zane::module_fs {
 
 class FileHandler {
 private:
@@ -123,11 +123,11 @@ public:
 
 ## 4. Hạn chế sử dụng thư viện ngoài (Third-party Libraries)
 
-Để đảm bảo hiệu suất tối đa (Peak Performance) và kiểm soát hoàn toàn bộ nhớ (Memory Management), Z8 tuân thủ quy tắc hạn chế tối đa việc phụ thuộc vào các thư viện bên ngoài.
+Để đảm bảo hiệu suất tối đa (Peak Performance) và kiểm soát hoàn toàn bộ nhớ (Memory Management), Zane tuân thủ quy tắc hạn chế tối đa việc phụ thuộc vào các thư viện bên ngoài.
 
 ### Quy tắc:
 
-- **Ưu tiên tự triển khai**: Đối với các tính năng thông dụng, hãy ưu tiên sử dụng `Standard Template Library (STL)` hiện đại hoặc tự triển khai các cấu trúc dữ liệu tối ưu cho Z8.
+- **Ưu tiên tự triển khai**: Đối với các tính năng thông dụng, hãy ưu tiên sử dụng `Standard Template Library (STL)` hiện đại hoặc tự triển khai các cấu trúc dữ liệu tối ưu cho Zane.
 - **Tại sao?**: Các thư viện ngoài thường đi kèm với nhiều tính năng dư thừa (bloatware), làm tăng kích thước file thực thi và có thể chứa các cơ chế quản lý bộ nhớ không tương thích với V8.
 - **Trường hợp ngoại lệ**:
   - Các thư viện thực hiện thuật toán cực kỳ phức tạp hoặc mang tính tiêu chuẩn ngành (ví dụ: `zlib` cho nén/giải nén, `OpenSSL` cho bảo mật).
@@ -167,7 +167,7 @@ void process() {
 
 ## 6. Quy tắc Hiệu năng (Performance Rules)
 
-Để đảm bảo Z8 luôn giữ vững vị thế là một engine JavaScript hiệu năng cao.
+Để đảm bảo Zane luôn giữ vững vị thế là một engine JavaScript hiệu năng cao.
 
 ### Quy tắc:
 

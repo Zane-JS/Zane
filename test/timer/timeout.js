@@ -6,7 +6,7 @@ setTimeout(() => {
 
 setTimeout((msg) => {
     console.log("⏰ Timer 2 fired after 50ms with arg:", msg);
-}, 50, "Z8 Performance");
+}, 50, "Zane Performance");
 
 const id = setTimeout(() => {
     console.log("❌ This should NOT print (cleared)");

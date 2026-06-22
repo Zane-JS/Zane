@@ -1,5 +1,5 @@
-#ifndef Z8_MODULE_HTTP_H
-#define Z8_MODULE_HTTP_H
+#ifndef ZANE_MODULE_HTTP_H
+#define Zane_MODULE_HTTP_H
 
 #include "v8.h"
 #include <cstdint>
@@ -19,7 +19,7 @@
 // Include llhttp (Parsing)
 #include "llhttp.h"
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 class HTTPServer;
@@ -363,6 +363,6 @@ private:
 };
 
 } // namespace module
-} // namespace z8
+} // namespace zane
 
-#endif // Z8_MODULE_HTTP_H
+#endif // Zane_MODULE_HTTP_H

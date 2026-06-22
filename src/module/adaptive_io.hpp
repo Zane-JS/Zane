@@ -1,12 +1,12 @@
-#ifndef Z8_ADAPTIVE_IO_H
-#define Z8_ADAPTIVE_IO_H
+#ifndef ZANE_ADAPTIVE_IO_H
+#define Zane_ADAPTIVE_IO_H
 
 #include <chrono>
 #include <cstdio>
 #include <mutex>
 #include <functional>
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 /**
@@ -60,7 +60,7 @@ public:
     }
 
     /**
-     * Configures a stream to use Z8's optimized 64KB full buffering.
+     * Configures a stream to use Zane's optimized 64KB full buffering.
      */
     static void setupBuffer(FILE* p_stream, size_t size = 64 * 1024) {
         if (p_stream) {
@@ -82,6 +82,6 @@ inline AdaptiveIO g_stdout_io;
 inline AdaptiveIO g_stderr_io;
 
 } // namespace module
-} // namespace z8
+} // namespace zane
 
-#endif // Z8_ADAPTIVE_IO_H
+#endif // ZANE_ADAPTIVE_IO_H

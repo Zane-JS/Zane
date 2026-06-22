@@ -1,10 +1,10 @@
-# Z8 Coding Guidelines
+# Zane Coding Guidelines
 
-This document specifies the C++ coding standards for the Z8 project to ensure consistency, performance, and maintainability.
+This document specifies the C++ coding standards for the Zane project to ensure consistency, performance, and maintainability.
 
 ## 1. Code Formatting
 
-The Z8 project uses the traditional **K&R (Kernighan & Ritchie)** style.
+The Zane project uses the traditional **K&R (Kernighan & Ritchie)** style.
 
 ### Basic Rules:
 
@@ -35,7 +35,7 @@ void ExampleFunction(int32_t value) {
 
 ## 2. Integer Types
 
-To ensure consistency across platforms (Windows/Linux/macOS) and prevent unexpected overflow issues, Z8 **always** uses fixed-width integer types from the `<cstdint>` library.
+To ensure consistency across platforms (Windows/Linux/macOS) and prevent unexpected overflow issues, Zane **always** uses fixed-width integer types from the `<cstdint>` library.
 
 ### Rules:
 
@@ -63,13 +63,13 @@ To ensure consistency across platforms (Windows/Linux/macOS) and prevent unexpec
 
 ## 3. Naming Conventions
 
-Z8 applies a naming system that combines Modern C++ style with safety standards from NASA and Google to optimize code readability.
+Zane applies a naming system that combines Modern C++ style with safety standards from NASA and Google to optimize code readability.
 
 | Entity                     | Rule                  | Example                        |
 | :------------------------- | :-------------------- | :----------------------------- |
 | **Class / Struct**         | `PascalCase`          | `FileStream`, `TaskRunner`     |
 | **Function / Method**      | `camelCase`           | `openFile()`, `readFileSync()` |
-| **Namespace**              | `snake_case`          | `z8::module_fs`                |
+| **Namespace**              | `snake_case`          | `zane::module_fs`                |
 | **Local Variable**         | `snake_case`          | `buffer_size`, `bytes_read`    |
 | **Member Variable**        | `m_snake_case`        | `m_file_handle`, `m_is_open`   |
 | **Pointer Variable (Raw)** | `p_snake_case`        | `p_isolate`, `p_context`       |
@@ -81,7 +81,7 @@ Z8 applies a naming system that combines Modern C++ style with safety standards 
 ### Example:
 
 ```cpp
-namespace z8::module_fs {
+namespace zane::module_fs {
 
 class FileHandler {
 private:
@@ -106,11 +106,11 @@ public:
 
 ## 4. Third-party Libraries
 
-To ensure Peak Performance and complete Control over Memory Management, Z8 follows a rule of strictly limiting dependencies on external libraries.
+To ensure Peak Performance and complete Control over Memory Management, Zane follows a rule of strictly limiting dependencies on external libraries.
 
 ### Rules:
 
-- **Prioritize Self-implementation**: For common features, prefer using the modern `Standard Template Library (STL)` or self-implementing optimized data structures for Z8.
+- **Prioritize Self-implementation**: For common features, prefer using the modern `Standard Template Library (STL)` or self-implementing optimized data structures for Zane.
 - **Why?**: External libraries often come with redundant features (bloatware), increasing the executable size and potentially containing memory management mechanisms incompatible with V8.
 - **Exceptions**:
   - Libraries implementing extremely complex algorithms or industry standards (e.g., `zlib` for compression, `OpenSSL` for security).
@@ -146,7 +146,7 @@ void process() {
 
 ## 6. Performance Rules
 
-To ensure Z8 remains a high-performance JavaScript engine.
+To ensure Zane remains a high-performance JavaScript engine.
 
 ### Rules:
 

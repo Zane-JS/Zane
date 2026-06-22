@@ -1,4 +1,4 @@
-# Zane V8 (Z8) Master Build Script (Incremental)
+# Zane Master Build Script (Incremental)
 
 param(
     [Parameter(Mandatory=$false)]
@@ -88,7 +88,7 @@ foreach ($dir in $buildDirs) {
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
 }
 
-Write-Host "Building Zane V8 (Z8)..."
+Write-Host "Building Zane..."
 Write-Host "Configuration: $Config"
 
 # --- Step 2: Extract Shims ---
@@ -107,7 +107,7 @@ $cppFlags = @(
 )
 
 $linkFlags = @(
-    "/OUT:z8.exe", "/SUBSYSTEM:CONSOLE", "/MACHINE:X64", "/NOLOGO",
+    "/OUT:zane.exe", "/SUBSYSTEM:CONSOLE", "/MACHINE:X64", "/NOLOGO",
     "V8\out.gn\x64.release\obj\v8_monolith.lib",
     "libcmt.lib", "libcpmt.lib",
     "winmm.lib", "dbghelp.lib", "shlwapi.lib", "user32.lib", "iphlpapi.lib",
@@ -123,8 +123,8 @@ if ($Config -eq "Release") {
 }
 
 if ($Config -eq "Debug") {
-    Write-Host "Enabling Z8_DEBUG_VERBOSE macro..."
-    $cppFlags += "/DZ8_DEBUG_VERBOSE"
+    Write-Host "Enabling ZANE_DEBUG_VERBOSE macro..."
+    $cppFlags += "/DZane_DEBUG_VERBOSE"
     $linkFlags += "/DEBUG"
 }
 
@@ -225,7 +225,7 @@ if (-not (Test-Path "deps/trantor_install/lib/trantor.lib")) {
     & .\build_trantor.ps1 -Config $Config
 }
 
-# 3.6: Z8 Core
+# 3.6: Zane Core
 $coreSources = @(
     "src/main.cpp", "src/temporal_shims.cpp", "src/module/console.cpp", "src/module/node/fs/fs.cpp", 
     "src/module/node/path/path.cpp", "src/module/node/os/os.cpp", "src/module/node/process/process.cpp", 
@@ -247,7 +247,7 @@ foreach ($src in $coreSources) {
 $linkFlags = $coreObjs + $linkFlags
 
 # --- Step 4: Link ---
-Write-Host "[4/4] Linking z8.exe..."
+Write-Host "[4/4] Linking zane.exe..."
 & link.exe $linkFlags
 
 if ($LASTEXITCODE -ne 0) {
@@ -255,5 +255,5 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-Write-Host "Zane V8 (Z8) is ready ($Config)!"
-Write-Host "Run it with: .\z8.exe test.js"
+Write-Host "Zane is ready ($Config)!"
+Write-Host "Run it with: .\zane.exe test.js"

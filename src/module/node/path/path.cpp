@@ -7,7 +7,7 @@
 
 namespace fs = std::filesystem;
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 namespace {
@@ -673,4 +673,4 @@ void Path::toNamespacedPathWin32(const v8::FunctionCallbackInfo<v8::Value>& args
 }
 
 } // namespace module
-} // namespace z8
+} // namespace zane

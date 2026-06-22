@@ -1,9 +1,9 @@
-#ifndef Z8_MODULE_BUFFER_H
-#define Z8_MODULE_BUFFER_H
+#ifndef ZANE_MODULE_BUFFER_H
+#define Zane_MODULE_BUFFER_H
 
 #include "v8.h"
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 class Buffer {
@@ -96,6 +96,6 @@ class Buffer {
 };
 
 } // namespace module
-} // namespace z8
+} // namespace zane
 
-#endif // Z8_MODULE_BUFFER_H
+#endif // Zane_MODULE_BUFFER_H

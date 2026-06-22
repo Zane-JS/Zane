@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Pre-commit hook for Z8 project.
+Pre-commit hook for Zane project.
 Automatically checks coding style before allowing commits.
 
 Installation:

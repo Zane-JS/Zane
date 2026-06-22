@@ -1,4 +1,4 @@
-# Build Trantor for Z8
+# Build Trantor for Zane
 param(
     [Parameter(Mandatory=$false)]
     [ValidateSet("Debug", "Release")]
@@ -7,7 +7,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "Building Trantor for Z8..." -ForegroundColor Cyan
+Write-Host "Building Trantor for Zane..." -ForegroundColor Cyan
 Write-Host "Configuration: $Config" -ForegroundColor Yellow
 
 # Check CMake

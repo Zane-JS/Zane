@@ -16,7 +16,7 @@
 #include <stdlib.h>
 #include <string>
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 // Global exit/crash handler to rescue logs
@@ -433,4 +433,4 @@ void Console::adaptiveFlush(FILE* p_out) {
 }
 
 } // namespace module
-} // namespace z8
+} // namespace zane

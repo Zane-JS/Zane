@@ -1,6 +1,7 @@
-# Zane V8 (Z8)
+# Zane
 
-**Zane V8 (Z8)** is a high-performance, lightweight JavaScript runtime built on top of Google's V8 engine. Written in pure C++ for maximum stability and performance on Windows.
+
+**Zane** is a high-performance, lightweight JavaScript runtime built on top of Google's V8 engine. Written in pure C++ for maximum stability and performance on Windows.
 
 ## ✨ Features
 
@@ -20,36 +21,33 @@
 
 - **Visual Studio 2022/2026** with "Desktop development with C++" workload.
 - **Python 3.x** (for shim extraction).
-- **V8 Artifacts**: Get them from [v8-z8](https://github.com/Z8-JS/v8-z8).
+- **V8 Artifacts**: Get them from [v8-zane](https://github.com/Zane-JS/v8-zane).
 
-## 🚀 Building Z8
+## 🚀 Building Zane
 
 1. Open **Developer PowerShell for Visual Studio**.
 2. Run the build script:
    ```powershell
    .\build.ps1
    ```
-3. The resulting `z8.exe` will be created in the root directory.
+3. The resulting `zane.exe` will be created in the root directory.
 
 ## 🏁 Running
 
-Make sure `icudtl.dat` is in the same directory as `z8.exe`.
+Make sure `icudtl.dat` is in the same directory as `zane.exe`.
 
 ```powershell
-.\z8.exe
+.\zane.exe
 ```
 
 ## 📜 Example
 
-Zane V8 runs C++ wrapped JavaScript:
-
-```cpp
-z8::Runtime rt;
-rt.Run("console.log('Hello from Z8!');", "app.js");
+```bash
+zane main.js
 ```
 
 ---
 
-**Z8: V8 - A Gift from God.**
+**Zane: V8 - A Gift from God.**
 
 

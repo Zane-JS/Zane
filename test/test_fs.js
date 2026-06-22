@@ -2,8 +2,8 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 
 console.log('Testing node:fs module...');
 
-const testFile = 'z8_test_file.txt';
-const content = 'Hello from Zane V8 (Z8)!';
+const testFile = 'zane_test_file.txt';
+const content = 'Hello from Zane V8 (Zane)!';
 
 console.log('Writing to file:', testFile);
 writeFileSync(testFile, content);

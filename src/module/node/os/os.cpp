@@ -19,7 +19,7 @@
 #pragma comment(lib, "ws2_32.lib")
 #endif
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 #ifdef _WIN32
@@ -493,4 +493,4 @@ void OS::setPriority(const v8::FunctionCallbackInfo<v8::Value>& args) {
 }
 
 } // namespace module
-} // namespace z8
+} // namespace zane

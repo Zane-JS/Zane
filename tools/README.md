@@ -1,12 +1,12 @@
-# Z8 Development Tools
+# Zane Development Tools
 
-This directory contains development tools for the Z8 project.
+This directory contains development tools for the Zane project.
 
 ## 📋 Available Tools
 
 ### 1. **check_style.py** - Coding Style Checker
 
-Automatically validates C++ code against Z8 coding standards.
+Automatically validates C++ code against Zane coding standards.
 
 **Usage:**
 
@@ -184,4 +184,4 @@ To improve these tools:
 ---
 
 **Last Updated:** 2026-01-29  
-**Maintainer:** Z8 Team
+**Maintainer:** Zane Team

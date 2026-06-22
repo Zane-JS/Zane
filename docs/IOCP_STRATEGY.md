@@ -1,8 +1,8 @@
-# Z8 Windows IOCP Strategy
+# Zane Windows IOCP Strategy
 
 ## Tổng quan chiến lược
 
-Z8 nhắm vào thị trường Windows server - thị trường lớn thứ hai mà Bun chưa chinh phục được do phụ thuộc vào libuv.
+Zane nhắm vào thị trường Windows server - thị trường lớn thứ hai mà Bun chưa chinh phục được do phụ thuộc vào libuv.
 
 ## Vấn đề với libuv
 
@@ -73,7 +73,7 @@ Z8 nhắm vào thị trường Windows server - thị trường lớn thứ hai 
 Node.js: Cross-platform but slow
 Bun: Fast on Unix, poor on Windows (libuv)
 Deno: Similar to Node.js
-Z8: Fast everywhere, NATIVE on Windows ← UNIQUE VALUE
+Zane: Fast everywhere, NATIVE on Windows ← UNIQUE VALUE
 ```
 
 ## Implementation Roadmap
@@ -166,7 +166,7 @@ struct iocp_operation {
 ## Marketing Messages
 
 ### For Developers
-"Z8: Native Windows performance without compromise"
+"Zane: Native Windows performance without compromise"
 "Build once, run fast everywhere - especially on Windows"
 "The only runtime that treats Windows as a first-class citizen"
 
@@ -246,7 +246,7 @@ struct iocp_operation {
 
 ## Conclusion
 
-Native IOCP support is Z8's killer feature for Windows. By eliminating libuv dependency and going directly to kernel APIs, we achieve:
+Native IOCP support is Zane's killer feature for Windows. By eliminating libuv dependency and going directly to kernel APIs, we achieve:
 
 - **2x better performance**
 - **Zero extra dependencies**
@@ -258,5 +258,5 @@ This is our competitive advantage against Bun and the key to winning the Windows
 ---
 
 **Status**: Phase 1 in progress
-**Owner**: Z8 Core Team
+**Owner**: Zane Core Team
 **Last Updated**: 2026-04-01

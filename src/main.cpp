@@ -1,6 +1,6 @@
-/* Z8 (Zane V8)
+/* Zane
  * A high-performance, competitive JavaScript engine.
- * Copyright (C) 2026 Zane V8 Authors
+ * Copyright (C) 2026 Zane Authors
  * Copyright (C) 2026 Sao Tin Developer Team
  */
 
@@ -58,8 +58,8 @@
 #pragma comment(lib, "ntdll.lib")
 #endif
 
-// Z8 Namespace
-namespace z8 {
+// Zane Namespace
+namespace zane {
 
 class Runtime {
   public:
@@ -105,27 +105,27 @@ class Runtime {
         v8::Context::Scope context_scope(context);
         v8::Local<v8::Object> global = context->Global();
         v8::Local<v8::Object> console =
-            z8::module::Console::createTemplate(p_isolate)->NewInstance(context).ToLocalChecked();
+            zane::module::Console::createTemplate(p_isolate)->NewInstance(context).ToLocalChecked();
 
         global->Set(context, v8::String::NewFromUtf8(p_isolate, "console").ToLocalChecked(), console).Check();
 
         // Initialize Process module (global object)
-        v8::Local<v8::Object> process = z8::module::Process::createObject(p_isolate, context);
+        v8::Local<v8::Object> process = zane::module::Process::createObject(p_isolate, context);
         global->Set(context, v8::String::NewFromUtf8(p_isolate, "process").ToLocalChecked(), process).Check();
 
         // Initialize Timer module
-        z8::module::Timer::initialize(p_isolate, context);
+        zane::module::Timer::initialize(p_isolate, context);
 
         // Initialize Buffer module (global object)
-        z8::module::Buffer::initialize(p_isolate, context);
+        zane::module::Buffer::initialize(p_isolate, context);
 
         // Initialize Web Streams (global objects)
         v8::Local<v8::Function> readable_stream_ctor = 
-            z8::module::Stream::createWebReadableStreamTemplate(p_isolate)->GetFunction(context).ToLocalChecked();
+            zane::module::Stream::createWebReadableStreamTemplate(p_isolate)->GetFunction(context).ToLocalChecked();
         (void)global->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "ReadableStream"), readable_stream_ctor);
 
         v8::Local<v8::Function> writable_stream_ctor = 
-            z8::module::Stream::createWebWritableStreamTemplate(p_isolate)->GetFunction(context).ToLocalChecked();
+            zane::module::Stream::createWebWritableStreamTemplate(p_isolate)->GetFunction(context).ToLocalChecked();
         (void)global->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "WritableStream"), writable_stream_ctor);
 
         p_isolate->SetHostImportModuleDynamicallyCallback(HostImportModuleDynamicallyCallback);
@@ -145,7 +145,7 @@ class Runtime {
         std::string specifier_str(*specifier_utf8);
 
         if (specifier_str == "node:fs") {
-            v8::Local<v8::ObjectTemplate> fs_template = z8::module::FS::createTemplate(p_isolate);
+            v8::Local<v8::ObjectTemplate> fs_template = zane::module::FS::createTemplate(p_isolate);
 
             // To get property names, we must create an instance first.
             v8::Local<v8::Object> fs_instance;
@@ -172,7 +172,7 @@ class Runtime {
                 v8::MemorySpan<const v8::Local<v8::String>>(export_names.data(), export_names.size()),
                 [](v8::Local<v8::Context> context, v8::Local<v8::Module> module) -> v8::MaybeLocal<v8::Value> {
                     v8::Isolate* p_isolate = v8::Isolate::GetCurrent();
-                    v8::Local<v8::ObjectTemplate> fs_template = z8::module::FS::createTemplate(p_isolate);
+                    v8::Local<v8::ObjectTemplate> fs_template = zane::module::FS::createTemplate(p_isolate);
                     v8::Local<v8::Object> fs_obj = fs_template->NewInstance(context).ToLocalChecked();
                     module
                         ->SetSyntheticModuleExport(p_isolate, v8::String::NewFromUtf8Literal(p_isolate, "default"), fs_obj)
@@ -191,7 +191,7 @@ class Runtime {
         }
 
         if (specifier_str == "node:path") {
-            v8::Local<v8::ObjectTemplate> path_template = z8::module::Path::createTemplate(p_isolate);
+            v8::Local<v8::ObjectTemplate> path_template = zane::module::Path::createTemplate(p_isolate);
             v8::Local<v8::Object> path_instance = path_template->NewInstance(context).ToLocalChecked();
             v8::Local<v8::Array> prop_names = path_instance->GetPropertyNames(context).ToLocalChecked();
 
@@ -207,7 +207,7 @@ class Runtime {
                 v8::MemorySpan<const v8::Local<v8::String>>(export_names.data(), export_names.size()),
                 [](v8::Local<v8::Context> context, v8::Local<v8::Module> module) -> v8::MaybeLocal<v8::Value> {
                     v8::Isolate* p_isolate = v8::Isolate::GetCurrent();
-                    v8::Local<v8::ObjectTemplate> path_template = z8::module::Path::createTemplate(p_isolate);
+                    v8::Local<v8::ObjectTemplate> path_template = zane::module::Path::createTemplate(p_isolate);
                     v8::Local<v8::Object> path_obj = path_template->NewInstance(context).ToLocalChecked();
                     module
                         ->SetSyntheticModuleExport(
@@ -225,7 +225,7 @@ class Runtime {
         }
 
         if (specifier_str == "node:os") {
-            v8::Local<v8::ObjectTemplate> os_template = z8::module::OS::createTemplate(p_isolate);
+            v8::Local<v8::ObjectTemplate> os_template = zane::module::OS::createTemplate(p_isolate);
             v8::Local<v8::Object> os_instance = os_template->NewInstance(context).ToLocalChecked();
             v8::Local<v8::Array> prop_names = os_instance->GetPropertyNames(context).ToLocalChecked();
 
@@ -241,7 +241,7 @@ class Runtime {
                 v8::MemorySpan<const v8::Local<v8::String>>(export_names.data(), export_names.size()),
                 [](v8::Local<v8::Context> context, v8::Local<v8::Module> module) -> v8::MaybeLocal<v8::Value> {
                     v8::Isolate* p_isolate = v8::Isolate::GetCurrent();
-                    v8::Local<v8::ObjectTemplate> os_template = z8::module::OS::createTemplate(p_isolate);
+                    v8::Local<v8::ObjectTemplate> os_template = zane::module::OS::createTemplate(p_isolate);
                     v8::Local<v8::Object> os_obj = os_template->NewInstance(context).ToLocalChecked();
                     module
                         ->SetSyntheticModuleExport(p_isolate, v8::String::NewFromUtf8Literal(p_isolate, "default"), os_obj)
@@ -258,7 +258,7 @@ class Runtime {
         }
 
         if (specifier_str == "node:fs/promises") {
-            v8::Local<v8::ObjectTemplate> fs_template = z8::module::FS::createPromisesTemplate(p_isolate);
+            v8::Local<v8::ObjectTemplate> fs_template = zane::module::FS::createPromisesTemplate(p_isolate);
             v8::Local<v8::Object> fs_instance = fs_template->NewInstance(context).ToLocalChecked();
             v8::Local<v8::Array> prop_names = fs_instance->GetPropertyNames(context).ToLocalChecked();
 
@@ -273,7 +273,7 @@ class Runtime {
                 v8::MemorySpan<const v8::Local<v8::String>>(export_names.data(), export_names.size()),
                 [](v8::Local<v8::Context> context, v8::Local<v8::Module> module) -> v8::MaybeLocal<v8::Value> {
                     v8::Isolate* p_isolate = v8::Isolate::GetCurrent();
-                    v8::Local<v8::ObjectTemplate> fs_template = z8::module::FS::createPromisesTemplate(p_isolate);
+                    v8::Local<v8::ObjectTemplate> fs_template = zane::module::FS::createPromisesTemplate(p_isolate);
                     v8::Local<v8::Object> fs_obj = fs_template->NewInstance(context).ToLocalChecked();
                     v8::Local<v8::Array> prop_names = fs_obj->GetPropertyNames(context).ToLocalChecked();
                     for (uint32_t i = 0; i < prop_names->Length(); ++i) {
@@ -287,7 +287,7 @@ class Runtime {
         }
 
         if (specifier_str == "node:util") {
-            v8::Local<v8::ObjectTemplate> util_template = z8::module::Util::createTemplate(p_isolate);
+            v8::Local<v8::ObjectTemplate> util_template = zane::module::Util::createTemplate(p_isolate);
             v8::Local<v8::Object> util_instance = util_template->NewInstance(context).ToLocalChecked();
             v8::Local<v8::Array> prop_names = util_instance->GetPropertyNames(context).ToLocalChecked();
 
@@ -303,7 +303,7 @@ class Runtime {
                 v8::MemorySpan<const v8::Local<v8::String>>(export_names.data(), export_names.size()),
                 [](v8::Local<v8::Context> context, v8::Local<v8::Module> module) -> v8::MaybeLocal<v8::Value> {
                     v8::Isolate* p_isolate = v8::Isolate::GetCurrent();
-                    v8::Local<v8::ObjectTemplate> util_template = z8::module::Util::createTemplate(p_isolate);
+                    v8::Local<v8::ObjectTemplate> util_template = zane::module::Util::createTemplate(p_isolate);
                     v8::Local<v8::Object> util_obj = util_template->NewInstance(context).ToLocalChecked();
                     module
                         ->SetSyntheticModuleExport(
@@ -321,7 +321,7 @@ class Runtime {
         }
         
         if (specifier_str == "node:zlib") {
-            v8::Local<v8::ObjectTemplate> zlib_template = z8::module::Zlib::createTemplate(p_isolate);
+            v8::Local<v8::ObjectTemplate> zlib_template = zane::module::Zlib::createTemplate(p_isolate);
             v8::Local<v8::Object> zlib_instance = zlib_template->NewInstance(context).ToLocalChecked();
             v8::Local<v8::Array> prop_names = zlib_instance->GetPropertyNames(context).ToLocalChecked();
 
@@ -337,7 +337,7 @@ class Runtime {
                 v8::MemorySpan<const v8::Local<v8::String>>(export_names.data(), export_names.size()),
                 [](v8::Local<v8::Context> context, v8::Local<v8::Module> module) -> v8::MaybeLocal<v8::Value> {
                     v8::Isolate* p_isolate = v8::Isolate::GetCurrent();
-                    v8::Local<v8::ObjectTemplate> zlib_template = z8::module::Zlib::createTemplate(p_isolate);
+                    v8::Local<v8::ObjectTemplate> zlib_template = zane::module::Zlib::createTemplate(p_isolate);
                     v8::Local<v8::Object> zlib_obj = zlib_template->NewInstance(context).ToLocalChecked();
                     module
                         ->SetSyntheticModuleExport(
@@ -355,7 +355,7 @@ class Runtime {
         }
 
         if (specifier_str == "node:events") {
-            v8::Local<v8::ObjectTemplate> events_template = z8::module::Events::createTemplate(p_isolate);
+            v8::Local<v8::ObjectTemplate> events_template = zane::module::Events::createTemplate(p_isolate);
             v8::Local<v8::Object> events_instance = events_template->NewInstance(context).ToLocalChecked();
             v8::Local<v8::Array> prop_names = events_instance->GetPropertyNames(context).ToLocalChecked();
 
@@ -373,7 +373,7 @@ class Runtime {
                 v8::MemorySpan<const v8::Local<v8::String>>(export_names.data(), export_names.size()),
                 [](v8::Local<v8::Context> context, v8::Local<v8::Module> module) -> v8::MaybeLocal<v8::Value> {
                     v8::Isolate* p_isolate = v8::Isolate::GetCurrent();
-                    v8::Local<v8::ObjectTemplate> events_template = z8::module::Events::createTemplate(p_isolate);
+                    v8::Local<v8::ObjectTemplate> events_template = zane::module::Events::createTemplate(p_isolate);
                     v8::Local<v8::Object> events_obj = events_template->NewInstance(context).ToLocalChecked();
                     
                     v8::Local<v8::Value> default_val = events_obj->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "default")).ToLocalChecked();
@@ -417,7 +417,7 @@ class Runtime {
         }
 
         if (specifier_str == "node:process") {
-            v8::Local<v8::Object> process_instance = z8::module::Process::createObject(p_isolate, context);
+            v8::Local<v8::Object> process_instance = zane::module::Process::createObject(p_isolate, context);
             v8::Local<v8::Array> prop_names = process_instance->GetPropertyNames(context).ToLocalChecked();
 
             std::vector<v8::Local<v8::String>> export_names;
@@ -432,7 +432,7 @@ class Runtime {
                 v8::MemorySpan<const v8::Local<v8::String>>(export_names.data(), export_names.size()),
                 [](v8::Local<v8::Context> context, v8::Local<v8::Module> module) -> v8::MaybeLocal<v8::Value> {
                     v8::Isolate* p_isolate = v8::Isolate::GetCurrent();
-                    v8::Local<v8::Object> process_obj = z8::module::Process::createObject(p_isolate, context);
+                    v8::Local<v8::Object> process_obj = zane::module::Process::createObject(p_isolate, context);
                     module
                         ->SetSyntheticModuleExport(
                             p_isolate, v8::String::NewFromUtf8Literal(p_isolate, "default"), process_obj)
@@ -449,7 +449,7 @@ class Runtime {
         }
 
         if (specifier_str == "node:stream") {
-            v8::Local<v8::ObjectTemplate> stream_template = z8::module::Stream::createTemplate(p_isolate);
+            v8::Local<v8::ObjectTemplate> stream_template = zane::module::Stream::createTemplate(p_isolate);
             v8::Local<v8::Object> stream_instance = stream_template->NewInstance(context).ToLocalChecked();
             v8::Local<v8::Array> prop_names = stream_instance->GetPropertyNames(context).ToLocalChecked();
 
@@ -465,7 +465,7 @@ class Runtime {
                 v8::MemorySpan<const v8::Local<v8::String>>(export_names.data(), export_names.size()),
                 [](v8::Local<v8::Context> context, v8::Local<v8::Module> module) -> v8::MaybeLocal<v8::Value> {
                     v8::Isolate* p_isolate = v8::Isolate::GetCurrent();
-                    v8::Local<v8::ObjectTemplate> stream_template = z8::module::Stream::createTemplate(p_isolate);
+                    v8::Local<v8::ObjectTemplate> stream_template = zane::module::Stream::createTemplate(p_isolate);
                     v8::Local<v8::Object> stream_obj = stream_template->NewInstance(context).ToLocalChecked();
                     module
                         ->SetSyntheticModuleExport(
@@ -483,7 +483,7 @@ class Runtime {
         }
 
         if (specifier_str == "node:stream/promises") {
-            v8::Local<v8::ObjectTemplate> stream_template = z8::module::Stream::createTemplate(p_isolate);
+            v8::Local<v8::ObjectTemplate> stream_template = zane::module::Stream::createTemplate(p_isolate);
             v8::Local<v8::Object> stream_instance = stream_template->NewInstance(context).ToLocalChecked();
             v8::Local<v8::Object> promises_obj = stream_instance->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "promises")).ToLocalChecked().As<v8::Object>();
             v8::Local<v8::Array> prop_names = promises_obj->GetPropertyNames(context).ToLocalChecked();
@@ -500,7 +500,7 @@ class Runtime {
                 v8::MemorySpan<const v8::Local<v8::String>>(export_names.data(), export_names.size()),
                 [](v8::Local<v8::Context> context, v8::Local<v8::Module> module) -> v8::MaybeLocal<v8::Value> {
                     v8::Isolate* p_isolate = v8::Isolate::GetCurrent();
-                    v8::Local<v8::ObjectTemplate> stream_template = z8::module::Stream::createTemplate(p_isolate);
+                    v8::Local<v8::ObjectTemplate> stream_template = zane::module::Stream::createTemplate(p_isolate);
                     v8::Local<v8::Object> stream_obj = stream_template->NewInstance(context).ToLocalChecked();
                     v8::Local<v8::Object> promises_obj = stream_obj->Get(context, v8::String::NewFromUtf8Literal(p_isolate, "promises")).ToLocalChecked().As<v8::Object>();
                     
@@ -516,7 +516,7 @@ class Runtime {
         }
 
         if (specifier_str == "node:http") {
-            v8::Local<v8::ObjectTemplate> http_template = z8::module::HTTP::createTemplate(p_isolate);
+            v8::Local<v8::ObjectTemplate> http_template = zane::module::HTTP::createTemplate(p_isolate);
             v8::Local<v8::Object> http_instance = http_template->NewInstance(context).ToLocalChecked();
             v8::Local<v8::Array> prop_names = http_instance->GetPropertyNames(context).ToLocalChecked();
 
@@ -532,7 +532,7 @@ class Runtime {
                 v8::MemorySpan<const v8::Local<v8::String>>(export_names.data(), export_names.size()),
                 [](v8::Local<v8::Context> context, v8::Local<v8::Module> module) -> v8::MaybeLocal<v8::Value> {
                     v8::Isolate* p_isolate = v8::Isolate::GetCurrent();
-                    v8::Local<v8::ObjectTemplate> http_template = z8::module::HTTP::createTemplate(p_isolate);
+                    v8::Local<v8::ObjectTemplate> http_template = zane::module::HTTP::createTemplate(p_isolate);
                     v8::Local<v8::Object> http_obj = http_template->NewInstance(context).ToLocalChecked();
                     module
                         ->SetSyntheticModuleExport(
@@ -645,8 +645,8 @@ class Runtime {
         bool keep_running = true;
         while (keep_running) {
             // 1. Process Tasks from TaskQueue
-            while (!z8::TaskQueue::getInstance().isEmpty()) {
-                z8::Task* p_task = z8::TaskQueue::getInstance().dequeue();
+            while (!zane::TaskQueue::getInstance().isEmpty()) {
+                zane::Task* p_task = zane::TaskQueue::getInstance().dequeue();
                 if (p_task) {
                     v8::TryCatch task_try_catch(p_isolate);
                     p_task->m_runner(p_isolate, context, p_task);
@@ -662,9 +662,9 @@ class Runtime {
             }
 
             // 2. Process Timers
-            if (z8::module::Timer::hasActiveTimers()) {
+            if (zane::module::Timer::hasActiveTimers()) {
                 v8::TryCatch loop_try_catch(p_isolate);
-                z8::module::Timer::tick(p_isolate, context);
+                zane::module::Timer::tick(p_isolate, context);
                 p_isolate->PerformMicrotaskCheckpoint();
                 if (loop_try_catch.HasCaught()) {
                     ReportException(p_isolate, &loop_try_catch);
@@ -673,17 +673,17 @@ class Runtime {
             }
 
             // 3. Final termination check (Timer, TaskQueue, ThreadPool, HTTP Servers)
-            bool has_work = z8::module::Timer::hasActiveTimers() ||
-                            !z8::TaskQueue::getInstance().isEmpty() ||
-                            z8::ThreadPool::getInstance().hasPendingTasks() ||
-                            z8::module::HTTPServer::hasActiveServers();
+            bool has_work = zane::module::Timer::hasActiveTimers() ||
+                            !zane::TaskQueue::getInstance().isEmpty() ||
+                            zane::ThreadPool::getInstance().hasPendingTasks() ||
+                            zane::module::HTTPServer::hasActiveServers();
 
             if (!has_work) {
                 p_isolate->PerformMicrotaskCheckpoint();
 
-                bool timers = z8::module::Timer::hasActiveTimers();
-                bool tasks = !z8::TaskQueue::getInstance().isEmpty();
-                bool threads = z8::ThreadPool::getInstance().hasPendingTasks();
+                bool timers = zane::module::Timer::hasActiveTimers();
+                bool tasks = !zane::TaskQueue::getInstance().isEmpty();
+                bool threads = zane::ThreadPool::getInstance().hasPendingTasks();
                 
                 has_work = timers || tasks || threads;
                 
@@ -693,15 +693,15 @@ class Runtime {
             }
 
             // 4. Wait for work if nothing is pending right now
-            if (keep_running && z8::TaskQueue::getInstance().isEmpty()) { 
-                std::chrono::milliseconds delay = z8::module::Timer::getNextDelay();
+            if (keep_running && zane::TaskQueue::getInstance().isEmpty()) { 
+                std::chrono::milliseconds delay = zane::module::Timer::getNextDelay();
                 std::chrono::milliseconds timeout(10); 
                 if (delay.count() >= 0) {
                     int64_t delay_ms = static_cast<int64_t>(delay.count());
                     int64_t min_delay = (delay_ms < 10LL) ? delay_ms : 10LL;
                     timeout = std::chrono::milliseconds(min_delay);
                 }
-                z8::TaskQueue::getInstance().wait(timeout);
+                zane::TaskQueue::getInstance().wait(timeout);
             }
         }
 
@@ -714,7 +714,7 @@ class Runtime {
         v8::Local<v8::Context> context = m_context.Get(p_isolate);
         v8::Context::Scope context_scope(context);
 
-        std::cout << "Welcome to Zane V8 (Z8) v" << Z8_BUILD_VERSION << std::endl;
+        std::cout << "Welcome to Zane V8 (Zane) v" << Zane_BUILD_VERSION << std::endl;
         std::cout << "Type 'exit' or '.exit' to quit." << std::endl;
 
         std::string line;
@@ -798,8 +798,8 @@ class Runtime {
                 while (promise->State() == v8::Promise::kPending) {
                     p_isolate->PerformMicrotaskCheckpoint();
                     // Process task queue while waiting
-                    while (!z8::TaskQueue::getInstance().isEmpty()) {
-                        z8::Task* p_task = z8::TaskQueue::getInstance().dequeue();
+                    while (!zane::TaskQueue::getInstance().isEmpty()) {
+                        zane::Task* p_task = zane::TaskQueue::getInstance().dequeue();
                         if (p_task) {
                             p_task->m_runner(p_isolate, context, p_task);
                             delete p_task;
@@ -820,8 +820,8 @@ class Runtime {
             }
 
             if (!result->IsUndefined()) {
-                bool use_colors = z8::module::Util::shouldLogWithColors(stdout);
-                std::string inspected = z8::module::Util::inspectInternal(p_isolate, result, 2, 0, use_colors);
+                bool use_colors = zane::module::Util::shouldLogWithColors(stdout);
+                std::string inspected = zane::module::Util::inspectInternal(p_isolate, result, 2, 0, use_colors);
                 std::cout << inspected << std::endl;
             }
         }
@@ -884,7 +884,7 @@ class Runtime {
     v8::Global<v8::Context> m_context;
 };
 
-} // namespace z8
+} // namespace zane
 
 #include <filesystem>
 
@@ -983,13 +983,13 @@ int main(int argc, char* argv[]) {
 #endif
 
     if (argc < 2) {
-        z8::Runtime::Initialize(argv[0]);
-        z8::module::Process::setArgv(argc, argv);
+        zane::Runtime::Initialize(argv[0]);
+        zane::module::Process::setArgv(argc, argv);
         {
-            z8::Runtime rt;
+            zane::Runtime rt;
             rt.RunREPL();
         }
-        z8::Runtime::Shutdown();
+        zane::Runtime::Shutdown();
         return 0;
     }
 
@@ -1011,15 +1011,15 @@ int main(int argc, char* argv[]) {
         source = content;
     }
 
-    z8::Runtime::Initialize(argv[0]);
-    z8::module::Process::setArgv(argc, argv);
+    zane::Runtime::Initialize(argv[0]);
+    zane::module::Process::setArgv(argc, argv);
     bool success = false;
     {
-        z8::Runtime rt;
+        zane::Runtime rt;
         success = rt.Run(source, filename.string());
     }
 
-    z8::Runtime::Shutdown();
+    zane::Runtime::Shutdown();
     return success ? 0 : 1;
 }
 

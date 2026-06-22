@@ -12,7 +12,7 @@ async function runTest(fileCount) {
 
         const start = Date.now();
 
-        // 2. Tạo file (Dùng vòng lặp chờ đợi để tránh crash nếu Z8 chưa xử lý tốt Promise.all)
+        // 2. Tạo file (Dùng vòng lặp chờ đợi để tránh crash nếu Zane chưa xử lý tốt Promise.all)
         for (let i = 0; i < fileCount; i++) {
             await writeFile(join(testDir, `f_${i}.txt`), content);
         }
@@ -37,4 +37,4 @@ async function runTest(fileCount) {
     }
 }
 
-runTest(1000); // Thử với 500 file trước để xem độ ổn định của Z8
+runTest(1000); // Thử với 500 file trước để xem độ ổn định của Zane

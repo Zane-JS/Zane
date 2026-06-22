@@ -12,7 +12,7 @@
 #include "task_queue.hpp"
 #include "thread_pool.hpp"
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 // Forward declarations for stream methods
@@ -255,7 +255,7 @@ static bool getInput(const v8::FunctionCallbackInfo<v8::Value>& args, uint8_t** 
 
 static void returnBuffer(const v8::FunctionCallbackInfo<v8::Value>& args, const std::vector<uint8_t>& out_buffer) {
     v8::Isolate* p_isolate = args.GetIsolate();
-    v8::Local<v8::Uint8Array> ui = z8::module::Buffer::createBuffer(p_isolate, out_buffer.size());
+    v8::Local<v8::Uint8Array> ui = zane::module::Buffer::createBuffer(p_isolate, out_buffer.size());
     memcpy(ui->Buffer()->GetBackingStore()->Data(), out_buffer.data(), out_buffer.size());
     args.GetReturnValue().Set(ui);
 }
@@ -756,7 +756,7 @@ static void doZlibAsync(const v8::FunctionCallbackInfo<v8::Value>& args, int32_t
             if (p_ctx->m_is_error) {
                 resolver->Reject(context, v8::Exception::Error(v8::String::NewFromUtf8(isolate, p_ctx->m_error_msg.c_str()).ToLocalChecked())).Check();
             } else {
-                v8::Local<v8::Uint8Array> ui = z8::module::Buffer::createBuffer(isolate, p_ctx->m_output.size());
+                v8::Local<v8::Uint8Array> ui = zane::module::Buffer::createBuffer(isolate, p_ctx->m_output.size());
                 memcpy(ui->Buffer()->GetBackingStore()->Data(), p_ctx->m_output.data(), p_ctx->m_output.size());
                 
                 if (p_ctx->m_info) {
@@ -775,7 +775,7 @@ static void doZlibAsync(const v8::FunctionCallbackInfo<v8::Value>& args, int32_t
                 argv[1] = v8::Null(isolate);
             } else {
                 argv[0] = v8::Null(isolate);
-                v8::Local<v8::Uint8Array> ui = z8::module::Buffer::createBuffer(isolate, p_ctx->m_output.size());
+                v8::Local<v8::Uint8Array> ui = zane::module::Buffer::createBuffer(isolate, p_ctx->m_output.size());
                 memcpy(ui->Buffer()->GetBackingStore()->Data(), p_ctx->m_output.data(), p_ctx->m_output.size());
                 
                 if (p_ctx->m_info) {
@@ -1478,7 +1478,7 @@ static void streamProcess(const v8::FunctionCallbackInfo<v8::Value>& args, int32
         p_obj->m_finished = true;
     }
 
-    v8::Local<v8::Uint8Array> output_chunk = z8::module::Buffer::createBuffer(p_isolate, total_out);
+    v8::Local<v8::Uint8Array> output_chunk = zane::module::Buffer::createBuffer(p_isolate, total_out);
     memcpy(output_chunk->Buffer()->GetBackingStore()->Data(), out_buffer.data(), total_out);
 
     if (args.Length() > 2 && args[2]->IsFunction()) { // Callback for _transform
@@ -1620,7 +1620,7 @@ static void createZlibStream(const v8::FunctionCallbackInfo<v8::Value>& args, in
     
     v8::Local<v8::Data> old_internal = js_obj->GetInternalField(0);
     if (!old_internal.IsEmpty() && old_internal->IsValue() && old_internal.As<v8::Value>()->IsExternal()) {
-        delete static_cast<z8::module::StreamInternal*>(old_internal.As<v8::External>()->Value());
+        delete static_cast<zane::module::StreamInternal*>(old_internal.As<v8::External>()->Value());
     }
     js_obj->SetInternalField(0, v8::External::New(p_isolate, p_stream));
     
@@ -1875,7 +1875,7 @@ void Zlib::createBrotliCompress(const v8::FunctionCallbackInfo<v8::Value>& args)
     
     v8::Local<v8::Data> old_internal = js_obj->GetInternalField(0);
     if (!old_internal.IsEmpty() && old_internal->IsValue() && old_internal.As<v8::Value>()->IsExternal()) {
-        delete static_cast<z8::module::StreamInternal*>(old_internal.As<v8::External>()->Value());
+        delete static_cast<zane::module::StreamInternal*>(old_internal.As<v8::External>()->Value());
     }
     js_obj->SetInternalField(0, v8::External::New(p_isolate, p_stream));
     
@@ -1923,7 +1923,7 @@ void Zlib::createBrotliDecompress(const v8::FunctionCallbackInfo<v8::Value>& arg
     v8::Local<v8::Object> js_obj = tmpl->NewInstance(context).ToLocalChecked();
     v8::Local<v8::Data> old_internal = js_obj->GetInternalField(0);
     if (!old_internal.IsEmpty() && old_internal->IsValue() && old_internal.As<v8::Value>()->IsExternal()) {
-        delete static_cast<z8::module::StreamInternal*>(old_internal.As<v8::External>()->Value());
+        delete static_cast<zane::module::StreamInternal*>(old_internal.As<v8::External>()->Value());
     }
     js_obj->SetInternalField(0, v8::External::New(p_isolate, p_stream));
     
@@ -2135,7 +2135,7 @@ void Zlib::createZstdCompress(const v8::FunctionCallbackInfo<v8::Value>& args) {
     v8::Local<v8::Object> js_obj = tmpl->NewInstance(context).ToLocalChecked();
     v8::Local<v8::Data> old_internal = js_obj->GetInternalField(0);
     if (!old_internal.IsEmpty() && old_internal->IsValue() && old_internal.As<v8::Value>()->IsExternal()) {
-        delete static_cast<z8::module::StreamInternal*>(old_internal.As<v8::External>()->Value());
+        delete static_cast<zane::module::StreamInternal*>(old_internal.As<v8::External>()->Value());
     }
     js_obj->SetInternalField(0, v8::External::New(p_isolate, p_stream));
     
@@ -2183,7 +2183,7 @@ void Zlib::createZstdDecompress(const v8::FunctionCallbackInfo<v8::Value>& args)
     v8::Local<v8::Object> js_obj = tmpl->NewInstance(context).ToLocalChecked();
     v8::Local<v8::Data> old_internal = js_obj->GetInternalField(0);
     if (!old_internal.IsEmpty() && old_internal->IsValue() && old_internal.As<v8::Value>()->IsExternal()) {
-        delete static_cast<z8::module::StreamInternal*>(old_internal.As<v8::External>()->Value());
+        delete static_cast<zane::module::StreamInternal*>(old_internal.As<v8::External>()->Value());
     }
     js_obj->SetInternalField(0, v8::External::New(p_isolate, p_stream));
     
@@ -2216,5 +2216,5 @@ v8::Local<v8::ObjectTemplate> Zlib::createPromisesTemplate(v8::Isolate* p_isolat
 }
 
 } // namespace module
-} // namespace z8
+} // namespace zane
 

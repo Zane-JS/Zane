@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Z8 Coding Style Checker
-Automatically validates C++ code against Z8 coding standards.
+Zane Coding Style Checker
+Automatically validates C++ code against Zane coding standards.
 
 Usage:
     python check_style.py [path]
@@ -422,7 +422,7 @@ class StyleChecker:
         return all_good
 
     def print_report(self) -> bool:
-        print(f"\n{'='*70}\nZ8 Coding Style Check Report\n{'='*70}")
+        print(f"\n{'='*70}\nZane Coding Style Check Report\n{'='*70}")
         print(f"Files checked : {self.files_checked}\nErrors        : {len(self.errors)}\nWarnings      : {len(self.warnings)}\n{'='*70}\n")
         if self.errors:
             print("[ERROR] ERRORS:")

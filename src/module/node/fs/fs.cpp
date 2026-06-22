@@ -69,7 +69,7 @@ static int64_t fs_pwrite(int32_t fd, const void* p_buf, size_t count, int64_t of
 
 namespace fs = std::filesystem;
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 struct DirData {
@@ -598,7 +598,7 @@ static void DirRead(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new DirReadCtx();
     p_ctx->p_data = p_data;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_is_promise = is_promise;
     if (is_promise) {
         p_task->m_resolver.Reset(p_isolate, p_resolver);
@@ -681,7 +681,7 @@ static void DirClose(const v8::FunctionCallbackInfo<v8::Value>& args) {
         args.GetReturnValue().Set(p_resolver->GetPromise());
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_is_promise = is_promise;
     if (is_promise)
         p_task->m_resolver.Reset(p_isolate, p_resolver);
@@ -1847,7 +1847,7 @@ void FS::readFile(const v8::FunctionCallbackInfo<v8::Value>& args) {
         }
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -1930,7 +1930,7 @@ void FS::readFilePromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
         }
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -2024,7 +2024,7 @@ void FS::writeFile(const v8::FunctionCallbackInfo<v8::Value>& args) {
         p_ctx->m_is_binary = true;
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -2096,7 +2096,7 @@ void FS::writeFilePromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
         p_ctx->m_is_binary = true;
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -2182,7 +2182,7 @@ void FS::stat(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new StatCtx();
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -2236,7 +2236,7 @@ void FS::statPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new StatCtx();
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -2291,7 +2291,7 @@ void FS::unlink(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new UnlinkCtx();
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -2358,7 +2358,7 @@ void FS::unlinkPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new UnlinkCtx();
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -2428,7 +2428,7 @@ void FS::mkdir(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new MkdirCtx();
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -2482,7 +2482,7 @@ void FS::mkdirPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new MkdirCtx();
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -2570,7 +2570,7 @@ void FS::readdir(const v8::FunctionCallbackInfo<v8::Value>& args) {
         }
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -2636,7 +2636,7 @@ void FS::readdirPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
         }
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -2697,7 +2697,7 @@ void FS::rmdir(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new RmdirCtx();
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -2740,7 +2740,7 @@ void FS::rmdirPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new RmdirCtx();
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -2791,7 +2791,7 @@ void FS::rename(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_old_path = *old_path;
     p_ctx->m_new_path = *new_path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -2836,7 +2836,7 @@ void FS::renamePromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_old_path = *old_path;
     p_ctx->m_new_path = *new_path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -2892,7 +2892,7 @@ void FS::copyFile(const v8::FunctionCallbackInfo<v8::Value>& args) {
         p_ctx->m_flags = args[2]->Int32Value(p_isolate->GetCurrentContext()).FromMaybe(0);
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -2946,7 +2946,7 @@ void FS::copyFilePromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
         p_ctx->m_flags = args[2]->Int32Value(p_context).FromMaybe(0);
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -2998,7 +2998,7 @@ void FS::access(const v8::FunctionCallbackInfo<v8::Value>& args) {
         p_ctx->m_mode = args[1]->Int32Value(p_isolate->GetCurrentContext()).FromMaybe(0);
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -3044,7 +3044,7 @@ void FS::accessPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
         p_ctx->m_mode = args[1]->Int32Value(p_context).FromMaybe(0);
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -3105,7 +3105,7 @@ void FS::appendFile(const v8::FunctionCallbackInfo<v8::Value>& args) {
         p_ctx->m_is_binary = true;
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -3164,7 +3164,7 @@ void FS::appendFilePromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
         p_ctx->m_is_binary = true;
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -3218,7 +3218,7 @@ void FS::realpath(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new RealpathCtx();
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -3265,7 +3265,7 @@ void FS::realpathPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new RealpathCtx();
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -3319,7 +3319,7 @@ void FS::chmod(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_path = *path;
     p_ctx->m_mode = mode;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -3365,7 +3365,7 @@ void FS::chmodPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_path = *path;
     p_ctx->m_mode = mode;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -3414,7 +3414,7 @@ void FS::readlink(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new ReadlinkCtx();
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -3461,7 +3461,7 @@ void FS::readlinkPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new ReadlinkCtx();
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -3515,7 +3515,7 @@ void FS::symlink(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_target = *target;
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -3561,7 +3561,7 @@ void FS::symlinkPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_target = *target;
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -3604,7 +3604,7 @@ void FS::lstat(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_path = *path;
     p_ctx->m_follow_symlink = false;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -3649,7 +3649,7 @@ void FS::lstatPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_path = *path;
     p_ctx->m_follow_symlink = false;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -3704,7 +3704,7 @@ void FS::utimes(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_atime = atime;
     p_ctx->m_mtime = mtime;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -3752,7 +3752,7 @@ void FS::utimesPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_atime = atime;
     p_ctx->m_mtime = mtime;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -3803,7 +3803,7 @@ void FS::link(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_existing_path = *existing_path;
     p_ctx->m_new_path = *new_path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -3849,7 +3849,7 @@ void FS::linkPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_existing_path = *existing_path;
     p_ctx->m_new_path = *new_path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -3909,7 +3909,7 @@ void FS::truncate(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_path = *path;
     p_ctx->m_length = length;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -3958,7 +3958,7 @@ void FS::truncatePromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_path = *path;
     p_ctx->m_length = length;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -4098,7 +4098,7 @@ void FS::open(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_path = *path;
     p_ctx->m_flags = flags;
     p_ctx->m_mode = mode;
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -4147,7 +4147,7 @@ void FS::openPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_path = *path;
     p_ctx->m_flags = flags;
     p_ctx->m_mode = 0666;
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -4212,7 +4212,7 @@ void FS::read(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_length = length;
     p_ctx->m_position = position;
     p_ctx->m_buffer_keep_alive.Reset(p_isolate, ui8);
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -4276,7 +4276,7 @@ void FS::write(const v8::FunctionCallbackInfo<v8::Value>& args) {
         if (args.Length() >= 3 && args[2]->IsNumber())
             p_ctx->m_position = static_cast<int64_t>(args[2]->NumberValue(p_context).FromMaybe(-1));
     }
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -4347,7 +4347,7 @@ void FS::close(const v8::FunctionCallbackInfo<v8::Value>& args) {
     };
     auto p_ctx = new CloseCtx();
     p_ctx->m_fd = fd;
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -4393,7 +4393,7 @@ void FS::fstat(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
     auto p_ctx = new FstatCtx();
     p_ctx->m_fd = fd;
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -4488,7 +4488,7 @@ void FS::fstatPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new FstatCtx();
     p_ctx->m_fd = fd;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -4597,7 +4597,7 @@ void FS::rm(const v8::FunctionCallbackInfo<v8::Value>& args) {
         }
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -4652,7 +4652,7 @@ void FS::rmPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
         }
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -4706,7 +4706,7 @@ void FS::cp(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_src = *src;
     p_ctx->m_dest = *dest;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -4751,7 +4751,7 @@ void FS::cpPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_src = *src;
     p_ctx->m_dest = *dest;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -4798,7 +4798,7 @@ void FS::fsync(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new FsyncCtx();
     p_ctx->m_fd = fd;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -4847,7 +4847,7 @@ void FS::fsyncPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new FsyncCtx();
     p_ctx->m_fd = fd;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -5085,7 +5085,7 @@ void FS::ftruncate(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_fd = fd;
     p_ctx->m_len = len;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -5139,7 +5139,7 @@ void FS::ftruncatePromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_fd = fd;
     p_ctx->m_len = len;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -5198,7 +5198,7 @@ void FS::futimes(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_atime = atime;
     p_ctx->m_mtime = mtime;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -5259,7 +5259,7 @@ void FS::futimesPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_atime = atime;
     p_ctx->m_mtime = mtime;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -5319,7 +5319,7 @@ void FS::mkdtemp(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new MkdtempCtx();
     p_ctx->m_prefix = *prefix;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -5384,7 +5384,7 @@ void FS::mkdtempPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new MkdtempCtx();
     p_ctx->m_prefix = *prefix;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -5512,7 +5512,7 @@ void FS::statfs(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new StatFsCtx();
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -5558,7 +5558,7 @@ void FS::statfsPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new StatFsCtx();
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -5671,7 +5671,7 @@ void FS::lutimes(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_atime = atime;
     p_ctx->m_mtime = mtime;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -5752,7 +5752,7 @@ void FS::lutimesPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_atime = atime;
     p_ctx->m_mtime = mtime;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -5841,7 +5841,7 @@ void FS::chown(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_uid = uid;
     p_ctx->m_gid = gid;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -5887,7 +5887,7 @@ void FS::fchown(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_gid = gid;
     p_ctx->m_is_fd = true;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -5933,7 +5933,7 @@ void FS::lchown(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_gid = gid;
     p_ctx->m_is_lchown = true;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -5983,7 +5983,7 @@ void FS::chownPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_uid = uid;
     p_ctx->m_gid = gid;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -6035,7 +6035,7 @@ void FS::fchownPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_gid = gid;
     p_ctx->m_is_fd = true;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -6087,7 +6087,7 @@ void FS::lchownPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_gid = gid;
     p_ctx->m_is_lchown = true;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -6142,7 +6142,7 @@ void FS::opendir(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new OpendirCtx();
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -6177,7 +6177,7 @@ void FS::opendirPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_ctx = new OpendirCtx();
     p_ctx->m_path = *path;
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -6229,7 +6229,7 @@ void FS::readv(const v8::FunctionCallbackInfo<v8::Value>& args) {
         }
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -6333,7 +6333,7 @@ void FS::writev(const v8::FunctionCallbackInfo<v8::Value>& args) {
         }
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_callback.Reset(p_isolate, p_cb);
     p_task->m_is_promise = false;
     p_task->p_data = p_ctx;
@@ -6409,7 +6409,7 @@ void FS::readvPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
         }
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -6511,7 +6511,7 @@ void FS::writevPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
         }
     }
 
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->m_resolver.Reset(p_isolate, p_resolver);
     p_task->m_is_promise = true;
     p_task->p_data = p_ctx;
@@ -6561,7 +6561,7 @@ void FS::writevPromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
     });
 }
   
-struct ReadStreamInternal : public z8::module::StreamInternal {
+struct ReadStreamInternal : public zane::module::StreamInternal {
     int32_t m_fd = -1;
     bool m_auto_close = true;
 
@@ -6614,7 +6614,7 @@ static void readStream_read(const v8::FunctionCallbackInfo<v8::Value>& args) {
         return;
     }
 
-    v8::Local<v8::Uint8Array> ui8 = z8::module::Buffer::createBuffer(p_isolate, bytes_read);
+    v8::Local<v8::Uint8Array> ui8 = zane::module::Buffer::createBuffer(p_isolate, bytes_read);
     memcpy(ui8->Buffer()->GetBackingStore()->Data(), buffer.data(), bytes_read);
 
     v8::Local<v8::Value> push_argv[] = { ui8 };
@@ -6649,13 +6649,13 @@ void FS::createReadStream(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_fd = fd;
     p_ctx->m_is_readable = true;
 
-    v8::Local<v8::FunctionTemplate> readable_tmpl = z8::module::Stream::getReadableTemplate(p_isolate);
+    v8::Local<v8::FunctionTemplate> readable_tmpl = zane::module::Stream::getReadableTemplate(p_isolate);
     v8::Local<v8::Object> js_obj;
     if (!readable_tmpl->GetFunction(context).ToLocalChecked()->NewInstance(context).ToLocal(&js_obj)) return;
     
     v8::Local<v8::Data> old_internal = js_obj->GetInternalField(0);
     if (!old_internal.IsEmpty() && old_internal->IsValue() && old_internal.As<v8::Value>()->IsExternal()) {
-        delete static_cast<z8::module::StreamInternal*>(old_internal.As<v8::External>()->Value());
+        delete static_cast<zane::module::StreamInternal*>(old_internal.As<v8::External>()->Value());
     }
     js_obj->SetInternalField(0, v8::External::New(p_isolate, p_ctx));
     js_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "_read"), v8::FunctionTemplate::New(p_isolate, readStream_read)->GetFunction(context).ToLocalChecked()).Check();
@@ -6668,7 +6668,7 @@ void FS::createReadStream(const v8::FunctionCallbackInfo<v8::Value>& args) {
     args.GetReturnValue().Set(js_obj);
 }
 
-struct WriteStreamInternal : public z8::module::StreamInternal {
+struct WriteStreamInternal : public zane::module::StreamInternal {
     int32_t m_fd = -1;
     bool m_auto_close = true;
 
@@ -6739,13 +6739,13 @@ void FS::createWriteStream(const v8::FunctionCallbackInfo<v8::Value>& args) {
     p_ctx->m_fd = fd;
     p_ctx->m_is_writable = true;
 
-    v8::Local<v8::FunctionTemplate> writable_tmpl = z8::module::Stream::getWritableTemplate(p_isolate);
+    v8::Local<v8::FunctionTemplate> writable_tmpl = zane::module::Stream::getWritableTemplate(p_isolate);
     v8::Local<v8::Object> js_obj;
     if (!writable_tmpl->GetFunction(context).ToLocalChecked()->NewInstance(context).ToLocal(&js_obj)) return;
     
     v8::Local<v8::Data> old_internal = js_obj->GetInternalField(0);
     if (!old_internal.IsEmpty() && old_internal->IsValue() && old_internal.As<v8::Value>()->IsExternal()) {
-        delete static_cast<z8::module::StreamInternal*>(old_internal.As<v8::External>()->Value());
+        delete static_cast<zane::module::StreamInternal*>(old_internal.As<v8::External>()->Value());
     }
     js_obj->SetInternalField(0, v8::External::New(p_isolate, p_ctx));
     js_obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "_write"), v8::FunctionTemplate::New(p_isolate, writeStream_write)->GetFunction(context).ToLocalChecked()).Check();
@@ -6759,5 +6759,5 @@ void FS::createWriteStream(const v8::FunctionCallbackInfo<v8::Value>& args) {
 }
 
 } // namespace module
-} // namespace z8
+} // namespace zane
 

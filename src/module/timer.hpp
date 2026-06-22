@@ -1,5 +1,5 @@
-#ifndef Z8_TIMER_H
-#define Z8_TIMER_H
+#ifndef Zane_TIMER_H
+#define Zane_TIMER_H
 
 #include "v8.h"
 #include <chrono>
@@ -8,7 +8,7 @@
 #include <memory>
 #include <vector>
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 class Timer {
@@ -43,6 +43,6 @@ class Timer {
 };
 
 } // namespace module
-} // namespace z8
+} // namespace zane
 
-#endif // Z8_TIMER_H
+#endif // Zane_TIMER_H

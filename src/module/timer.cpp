@@ -1,7 +1,7 @@
 #include "timer.hpp"
 #include <algorithm>
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 std::map<int32_t, std::unique_ptr<Timer::TimerData>> Timer::m_timers;
@@ -195,4 +195,4 @@ std::chrono::milliseconds Timer::getNextDelay() {
 }
 
 } // namespace module
-} // namespace z8
+} // namespace zane

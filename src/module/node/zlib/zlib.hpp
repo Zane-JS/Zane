@@ -1,9 +1,9 @@
-#ifndef Z8_MODULE_ZLIB_H
-#define Z8_MODULE_ZLIB_H
+#ifndef Zane_MODULE_ZLIB_H
+#define Zane_MODULE_ZLIB_H
 
 #include "v8.h"
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 class Zlib {
@@ -66,6 +66,6 @@ class Zlib {
 };
 
 } // namespace module
-} // namespace z8
+} // namespace zane
 
-#endif // Z8_MODULE_ZLIB_H
+#endif // Zane_MODULE_ZLIB_H

@@ -1,12 +1,12 @@
-#ifndef Z8_MODULE_STREAM_H
-#define Z8_MODULE_STREAM_H
+#ifndef Zane_MODULE_STREAM_H
+#define Zane_MODULE_STREAM_H
 
 #include "v8.h"
 #include "../events/events.hpp"
 #include <vector> // Added for std::vector
 #include <cstdint>
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 // Internal state for C++ backed streams
@@ -192,6 +192,6 @@ class Stream {
 };
 
 } // namespace module
-} // namespace z8
+} // namespace zane
 
-#endif // Z8_MODULE_STREAM_H
+#endif // Zane_MODULE_STREAM_H

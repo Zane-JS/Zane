@@ -1,11 +1,11 @@
-#ifndef Z8_MODULE_PROCESS_H
-#define Z8_MODULE_PROCESS_H
+#ifndef Zane_MODULE_PROCESS_H
+#define Zane_MODULE_PROCESS_H
 
 #include "v8.h"
 #include <map>
 #include <string>
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 class Process {
@@ -54,6 +54,6 @@ class Process {
 };
 
 } // namespace module
-} // namespace z8
+} // namespace zane
 
-#endif // Z8_MODULE_PROCESS_H
+#endif // Zane_MODULE_PROCESS_H

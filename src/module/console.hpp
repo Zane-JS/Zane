@@ -1,10 +1,10 @@
-#ifndef Z8_CONSOLE_H
-#define Z8_CONSOLE_H
+#ifndef Zane_CONSOLE_H
+#define Zane_CONSOLE_H
 
 #include "v8.h"
 #include <cstdint>
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 class Console {
@@ -37,6 +37,6 @@ class Console {
 };
 
 } // namespace module
-} // namespace z8
+} // namespace zane
 
-#endif // Z8_CONSOLE_H
+#endif // Zane_CONSOLE_H

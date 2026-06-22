@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Install Git hooks for Z8 project.
+Install Git hooks for Zane project.
 
 This script installs the pre-commit hook that automatically checks
 coding style before allowing commits.
@@ -20,7 +20,7 @@ def main():
     
     if not git_hooks_dir.exists():
         print("❌ Error: .git/hooks directory not found")
-        print("   Make sure you're running this from the Z8-app directory")
+        print("   Make sure you're running this from the Zane-app directory")
         return 1
     
     # Install pre-commit hook

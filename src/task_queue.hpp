@@ -1,5 +1,5 @@
-#ifndef Z8_TASK_QUEUE_H
-#define Z8_TASK_QUEUE_H
+#ifndef ZANE_TASK_QUEUE_H
+#define Zane_TASK_QUEUE_H
 
 #include "v8.h"
 #include <chrono>
@@ -9,7 +9,7 @@
 #include <mutex>
 #include <queue>
 
-namespace z8 {
+namespace zane {
 
 struct Task {
     v8::Global<v8::Function> m_callback;
@@ -65,6 +65,6 @@ class TaskQueue {
     std::condition_variable m_condition;
 };
 
-} // namespace z8
+} // namespace zane
 
 #endif

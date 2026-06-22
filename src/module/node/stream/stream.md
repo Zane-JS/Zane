@@ -1,6 +1,6 @@
 # Stream
 
-The `stream` module provides an API for implementing the stream interface. Streams are an abstract interface for working with streaming data in Z8. All streams are instances of EventEmitter.
+The `stream` module provides an API for implementing the stream interface. Streams are an abstract interface for working with streaming data in Zane. All streams are instances of EventEmitter.
 
 ```js
 import stream from "node:stream";
@@ -8,7 +8,7 @@ import stream from "node:stream";
 
 ## Types of Streams
 
-There are four fundamental stream types within Z8:
+There are four fundamental stream types within Zane:
 
 - **Readable**: streams from which data can be read
 - **Writable**: streams to which data can be written
@@ -594,9 +594,9 @@ Readable streams operate in one of two modes:
 - **Flowing mode**: Data is read automatically and provided as quickly as possible
 - **Paused mode**: `read()` must be called explicitly to read chunks of data
 
-## Z8-Specific Notes
+## Zane-Specific Notes
 
 - All stream implementations follow the Node.js v24.x API specification
 - Streams are built on top of V8's EventEmitter
-- The implementation uses Z8's TaskQueue for asynchronous operations
-- Memory management follows Z8's coding guidelines with proper cleanup on destruction
+- The implementation uses Zane's TaskQueue for asynchronous operations
+- Memory management follows Zane's coding guidelines with proper cleanup on destruction

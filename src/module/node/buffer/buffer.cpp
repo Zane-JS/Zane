@@ -2,7 +2,7 @@
 #include <cstring>
 #include <vector>
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 // Helper for Hex
@@ -304,7 +304,7 @@ void Buffer::alloc(const v8::FunctionCallbackInfo<v8::Value>& args) {
 }
 
 void Buffer::allocUnsafe(const v8::FunctionCallbackInfo<v8::Value>& args) {
-    // For now, same as alloc in Z8 for simplicity
+    // For now, same as alloc in Zane for simplicity
     alloc(args);
 }
 
@@ -1546,7 +1546,7 @@ void Buffer::isUtf8(const v8::FunctionCallbackInfo<v8::Value>& args) {
 }
 
 } // namespace module
-} // namespace z8
+} // namespace zane
 
 
 

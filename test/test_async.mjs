@@ -16,7 +16,7 @@ async function testAsync() {
         console.log("✅ mkdir successful");
 
         const filePath = `${testDir}/hello.txt`;
-        await writeFile(filePath, "Hello from Gravity Bot and Z8 Async!");
+        await writeFile(filePath, "Hello from Gravity Bot and Zane Async!");
         console.log("✅ writeFile successful");
 
         const content = await readFile(filePath);

@@ -6,7 +6,7 @@
 #include <cstdio>
 #include <iostream> // Added for std::cerr and std::endl
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 int32_t Events::m_default_max_listeners = 10;
@@ -164,7 +164,7 @@ struct ListenerTaskData {
 };
 
 // The runner function for the TaskQueue
-static void ListenerTaskRunner(v8::Isolate* p_isolate, v8::Local<v8::Context> context, z8::Task* p_task) {
+static void ListenerTaskRunner(v8::Isolate* p_isolate, v8::Local<v8::Context> context, zane::Task* p_task) {
     v8::HandleScope handle_scope(p_isolate);
     v8::Context::Scope context_scope(context);
 
@@ -193,11 +193,11 @@ static void ListenerTaskRunner(v8::Isolate* p_isolate, v8::Local<v8::Context> co
 // Helper to enqueue a listener call
 static void enqueueListenerCall(v8::Isolate* p_isolate, v8::Local<v8::Context> context, v8::Local<v8::Object> emitter, v8::Local<v8::Function> listener, const std::vector<v8::Local<v8::Value>>& argv) {
     ListenerTaskData* p_data = new ListenerTaskData(p_isolate, emitter, listener, argv);
-    z8::Task* p_task = new z8::Task();
+    zane::Task* p_task = new zane::Task();
     p_task->p_data = p_data;
     p_task->m_runner = ListenerTaskRunner;
     p_task->m_is_promise = false; // This is not a promise-based task
-    z8::TaskQueue::getInstance().enqueue(p_task);
+    zane::TaskQueue::getInstance().enqueue(p_task);
 }
 
 void Events::eeConstructor(const v8::FunctionCallbackInfo<v8::Value>& args) {
@@ -1967,4 +1967,4 @@ v8::Local<v8::FunctionTemplate> Events::getEventEmitterTemplate(v8::Isolate* p_i
 }
 
 } // namespace module
-} // namespace z8
+} // namespace zane

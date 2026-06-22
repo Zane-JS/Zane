@@ -1,9 +1,9 @@
-#ifndef Z8_MODULE_PATH_H
-#define Z8_MODULE_PATH_H
+#ifndef Zane_MODULE_PATH_H
+#define Zane_MODULE_PATH_H
 
 #include "v8.h"
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 class Path {
@@ -50,6 +50,6 @@ class Path {
 };
 
 } // namespace module
-} // namespace z8
+} // namespace zane
 
-#endif // Z8_MODULE_PATH_H
+#endif // Zane_MODULE_PATH_H

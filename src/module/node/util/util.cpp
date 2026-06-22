@@ -16,7 +16,7 @@
 #include <unistd.h>
 #endif
 
-namespace z8 {
+namespace zane {
 namespace module {
 
 v8::Local<v8::ObjectTemplate> Util::createTemplate(v8::Isolate* p_isolate) {
@@ -593,4 +593,4 @@ void Util::isWeakSet(const v8::FunctionCallbackInfo<v8::Value>& args) {
 }
 
 } // namespace module
-} // namespace z8
+} // namespace zane

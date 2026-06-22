@@ -1,7 +1,7 @@
 import util from 'node:util';
 
 console.log('--- util.format ---');
-console.log(util.format('Hello %s', 'Z8'));
+console.log(util.format('Hello %s', 'Zane'));
 console.log(util.format('%d + %d = %d', 1, 2, 3));
 console.log(util.format('JSON: %j', { a: 1 }));
 

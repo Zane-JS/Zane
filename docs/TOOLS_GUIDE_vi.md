@@ -2,14 +2,14 @@
 
 ## 🎯 Mục Đích
 
-Các công cụ này giúp đảm bảo code của Z8 luôn tuân thủ coding standards mà không cần refactor lại nhiều lần.
+Các công cụ này giúp đảm bảo code của Zane luôn tuân thủ coding standards mà không cần refactor lại nhiều lần.
 
 ## 📦 Cài Đặt Lần Đầu
 
 ### Bước 1: Cài đặt Git Hooks
 
 ```bash
-cd Z8-app
+cd Zane-app
 python tools/install_hooks.py
 ```
 
@@ -17,7 +17,7 @@ Kết quả:
 
 ```
 ✅ Git hooks installed successfully!
-   Pre-commit hook: D:\Z8\Z8-app\.git\hooks\pre-commit
+   Pre-commit hook: D:\Zane\Zane-app\.git\hooks\pre-commit
 
 📝 The pre-commit hook will now check coding style before each commit.
    To skip the check, use: git commit --no-verify
@@ -218,7 +218,7 @@ Thêm vào GitHub Actions:
 ```yaml
 - name: Check Coding Style
   run: python tools/check_style.py
-  working-directory: ./Z8-app
+  working-directory: ./Zane-app
 ```
 
 ---
@@ -278,4 +278,4 @@ A: Có, edit file `tools/check_style.py` và test kỹ.
 ---
 
 **Cập nhật:** 2026-01-29  
-**Người duy trì:** Z8 Team
+**Người duy trì:** Zane Team

@@ -9,7 +9,7 @@ import time
 # Thư mục chứa các thư viện phụ thuộc
 DEPS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "deps")
 
-# Danh sách các thư viện cần tải cho Z8 (Kế hoạch: Trantor + llhttp)
+# Danh sách các thư viện cần tải cho Zane (Kế hoạch: Trantor + llhttp)
 DEPENDENCIES = {
     "openssl": {
         "url": "https://github.com/openssl/openssl/releases/download/openssl-3.6.1/openssl-3.6.1.tar.gz",
@@ -119,6 +119,6 @@ def setup_dependencies():
                 print(f"🎉 Hoàn tất thiết lập {name}!")
 
 if __name__ == "__main__":
-    print("🚀 Bắt đầu thiết lập các thư viện phụ thuộc cho Z8 (Trantor + llhttp)...")
+    print("🚀 Bắt đầu thiết lập các thư viện phụ thuộc cho Zane (Trantor + llhttp)...")
     setup_dependencies()
     print("\n✨ Tất cả thư viện đã sẵn sàng trong thư mục /deps")

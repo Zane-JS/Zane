@@ -1,7 +1,7 @@
-# Drogon Integration Plan for Z8
+# Drogon Integration Plan for Zane
 
 ## Mục tiêu
-Tích hợp Drogon vào Z8 để có HTTP implementation tuân thủ chuẩn Web, xử lý tốt các edge cases.
+Tích hợp Drogon vào Zane để có HTTP implementation tuân thủ chuẩn Web, xử lý tốt các edge cases.
 
 ## Lý do chọn Drogon
 1. **Tuân thủ chuẩn HTTP**: Xử lý đầy đủ chunked encoding, header parsing, keep-alive
@@ -24,7 +24,7 @@ Tích hợp Drogon vào Z8 để có HTTP implementation tuân thủ chuẩn Web
 
 **Các bước:**
 1. Build Drogon với CMake
-2. Link static library vào Z8
+2. Link static library vào Zane
 3. Wrap Drogon API thành node:http API
 
 ### Option 2: Cherry-pick components (Tạm thời)
@@ -48,7 +48,7 @@ Tích hợp Drogon vào Z8 để có HTTP implementation tuân thủ chuẩn Web
 ### Option 3: Hybrid approach (Khuyến nghị cho development)
 **Sử dụng:**
 - Drogon's HTTP parser (cherry-pick)
-- Z8's own IOCP implementation (đã có)
+- Zane's own IOCP implementation (đã có)
 - Minimal dependencies
 
 **Lợi ích:**
@@ -97,7 +97,7 @@ Tích hợp Drogon vào Z8 để có HTTP implementation tuân thủ chuẩn Web
 ## Recommendation
 Bắt đầu với **Hybrid approach**:
 1. Sử dụng HTTP parser của Drogon
-2. Giữ IOCP implementation hiện tại của Z8
+2. Giữ IOCP implementation hiện tại của Zane
 3. Sau khi stable, có thể migrate sang full Drogon
 
 ## Next Steps

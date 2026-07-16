@@ -1,5 +1,5 @@
 #ifndef ZANE_MODULE_FS_H
-#define Zane_MODULE_FS_H
+#define ZANE_MODULE_FS_H
 
 #include "v8.h"
 #include <cstdint>

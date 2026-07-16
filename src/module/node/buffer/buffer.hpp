@@ -1,5 +1,5 @@
 #ifndef ZANE_MODULE_BUFFER_H
-#define Zane_MODULE_BUFFER_H
+#define ZANE_MODULE_BUFFER_H
 
 #include "v8.h"
 

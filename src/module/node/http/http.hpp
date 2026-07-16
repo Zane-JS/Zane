@@ -1,5 +1,5 @@
 #ifndef ZANE_MODULE_HTTP_H
-#define Zane_MODULE_HTTP_H
+#define ZANE_MODULE_HTTP_H
 
 #include "v8.h"
 #include <cstdint>

@@ -1,5 +1,5 @@
 #ifndef ZANE_MODULE_EVENTS_H
-#define Zane_MODULE_EVENTS_H
+#define ZANE_MODULE_EVENTS_H
 
 #include "v8.h"
 
@@ -73,4 +73,4 @@ class Events {
 } // namespace module
 } // namespace zane
 
-#endif // Zane_MODULE_EVENTS_H
+#endif // ZANE_MODULE_EVENTS_H

@@ -20,6 +20,7 @@
 #include <v8-isolate.h>
 
 #include "config.hpp"
+#include "utility.hpp"
 #include "libplatform/libplatform.h"
 
 // Environment interface
@@ -714,7 +715,7 @@ class Runtime {
         v8::Local<v8::Context> context = m_context.Get(p_isolate);
         v8::Context::Scope context_scope(context);
 
-        std::cout << "Welcome to Zane V8 (Zane) v" << Zane_BUILD_VERSION << std::endl;
+        std::cout << "Welcome to Zane V8 (Zane) v" << ZANE_BUILD_VERSION << std::endl;
         std::cout << "Type 'exit' or '.exit' to quit." << std::endl;
 
         std::string line;

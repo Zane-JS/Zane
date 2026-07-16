@@ -1,5 +1,5 @@
 #ifndef ZANE_TASK_QUEUE_H
-#define Zane_TASK_QUEUE_H
+#define ZANE_TASK_QUEUE_H
 
 #include "v8.h"
 #include <chrono>

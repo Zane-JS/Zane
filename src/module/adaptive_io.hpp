@@ -1,5 +1,5 @@
 #ifndef ZANE_ADAPTIVE_IO_H
-#define Zane_ADAPTIVE_IO_H
+#define ZANE_ADAPTIVE_IO_H
 
 #include <chrono>
 #include <cstdio>

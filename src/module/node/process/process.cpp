@@ -182,22 +182,22 @@ v8::Local<v8::Object> Process::createObject(v8::Isolate* p_isolate, v8::Local<v8
         .Check();
 
     // Set process.version
-    obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "version"), v8::String::NewFromUtf8Literal(p_isolate, "v" Zane_APP_VERSION))
+    obj->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "version"), v8::String::NewFromUtf8Literal(p_isolate, "v" ZANE_APP_VERSION))
         .Check();
 
     // Set process.versions
     v8::Local<v8::Object> versions_obj = v8::Object::New(p_isolate);
     versions_obj
-        ->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "zane"), v8::String::NewFromUtf8Literal(p_isolate, Zane_APP_VERSION))
+        ->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "zane"), v8::String::NewFromUtf8Literal(p_isolate, ZANE_APP_VERSION))
         .Check();
     versions_obj
-        ->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "node"), v8::String::NewFromUtf8Literal(p_isolate, Zane_NODE_VERSION)) // Report compatible Node.js version
+        ->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "node"), v8::String::NewFromUtf8Literal(p_isolate, ZANE_NODE_VERSION)) // Report compatible Node.js version
         .Check();
     versions_obj
-        ->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "napi"), v8::String::NewFromUtf8Literal(p_isolate, Zane_NAPI_VERSION))
+        ->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "napi"), v8::String::NewFromUtf8Literal(p_isolate, ZANE_NAPI_VERSION))
         .Check();
     versions_obj
-        ->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "modules"), v8::String::NewFromUtf8Literal(p_isolate, Zane_MODULES_VERSION))
+        ->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "modules"), v8::String::NewFromUtf8Literal(p_isolate, ZANE_MODULES_VERSION))
         .Check();
     versions_obj
         ->Set(context,

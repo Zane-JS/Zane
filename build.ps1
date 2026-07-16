@@ -198,6 +198,12 @@ if (Needs-Rebuild -Sources @("deps/zstd/lib") -Target $zstdLib) {
     & cl.exe $cppFlags /Fo"build\obj\" $zstdSources
     if ($LASTEXITCODE -ne 0) { exit 1 }
     & cl.exe $cppFlags /Fobuild\obj\zstd_preSplit.obj deps/zstd/lib/compress/zstd_preSplit.c
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+    
+    $objs = $zstdSources | ForEach-Object { "build\obj\" + [System.IO.Path]::GetFileNameWithoutExtension($_) + ".obj" }
+    $objs += "build\obj\zstd_preSplit.obj"
+    & lib.exe /NOLOGO /OUT:$zstdLib $objs
+    if ($LASTEXITCODE -ne 0) { exit 1 }
 }
 $linkFlags += $zstdLib
 

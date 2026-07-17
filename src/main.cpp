@@ -31,13 +31,13 @@
 #include "module/node/buffer/buffer.hpp"
 #include "module/node/events/events.hpp"
 #include "module/node/fs/fs.hpp"
-#include "module/node/http/http.hpp"
 #include "module/node/os/os.hpp"
 #include "module/node/path/path.hpp"
 #include "module/node/process/process.hpp"
 #include "module/node/util/util.hpp"
 #include "module/node/zlib/zlib.hpp"
 #include "module/node/stream/stream.hpp"
+#include "module/builtin/builtin.hpp"
 #include "task_queue.hpp"
 #include "thread_pool.hpp"
 
@@ -128,6 +128,9 @@ class Runtime {
         v8::Local<v8::Function> writable_stream_ctor = 
             zane::module::Stream::createWebWritableStreamTemplate(p_isolate)->GetFunction(context).ToLocalChecked();
         (void)global->Set(context, v8::String::NewFromUtf8Literal(p_isolate, "WritableStream"), writable_stream_ctor);
+
+        // Initialize Zane builtin modules
+        zane::builtin::registerBuiltins(p_isolate, context, global);
 
         p_isolate->SetHostImportModuleDynamicallyCallback(HostImportModuleDynamicallyCallback);
     }
@@ -516,40 +519,6 @@ class Runtime {
             return module;
         }
 
-        if (specifier_str == "node:http") {
-            v8::Local<v8::ObjectTemplate> http_template = zane::module::HTTP::createTemplate(p_isolate);
-            v8::Local<v8::Object> http_instance = http_template->NewInstance(context).ToLocalChecked();
-            v8::Local<v8::Array> prop_names = http_instance->GetPropertyNames(context).ToLocalChecked();
-
-            std::vector<v8::Local<v8::String>> export_names;
-            export_names.push_back(v8::String::NewFromUtf8Literal(p_isolate, "default"));
-            for (uint32_t i = 0; i < prop_names->Length(); ++i) {
-                export_names.push_back(prop_names->Get(context, i).ToLocalChecked().As<v8::String>());
-            }
-
-            auto module = v8::Module::CreateSyntheticModule(
-                p_isolate,
-                v8::String::NewFromUtf8Literal(p_isolate, "node:http"),
-                v8::MemorySpan<const v8::Local<v8::String>>(export_names.data(), export_names.size()),
-                [](v8::Local<v8::Context> context, v8::Local<v8::Module> module) -> v8::MaybeLocal<v8::Value> {
-                    v8::Isolate* p_isolate = v8::Isolate::GetCurrent();
-                    v8::Local<v8::ObjectTemplate> http_template = zane::module::HTTP::createTemplate(p_isolate);
-                    v8::Local<v8::Object> http_obj = http_template->NewInstance(context).ToLocalChecked();
-                    module
-                        ->SetSyntheticModuleExport(
-                            p_isolate, v8::String::NewFromUtf8Literal(p_isolate, "default"), http_obj)
-                        .Check();
-                    v8::Local<v8::Array> prop_names = http_obj->GetPropertyNames(context).ToLocalChecked();
-                    for (uint32_t i = 0; i < prop_names->Length(); ++i) {
-                        v8::Local<v8::String> name = prop_names->Get(context, i).ToLocalChecked().As<v8::String>();
-                        module->SetSyntheticModuleExport(p_isolate, name, http_obj->Get(context, name).ToLocalChecked())
-                            .Check();
-                    }
-                    return v8::Undefined(p_isolate);
-                });
-            return module;
-        }
-
         p_isolate->ThrowException(
             v8::String::NewFromUtf8(p_isolate, ("Module not found: " + specifier_str).c_str()).ToLocalChecked());
         return v8::MaybeLocal<v8::Module>();
@@ -673,11 +642,11 @@ class Runtime {
                 }
             }
 
-            // 3. Final termination check (Timer, TaskQueue, ThreadPool, HTTP Servers)
+            // 3. Final termination check (Timer, TaskQueue, ThreadPool, Builtin)
             bool has_work = zane::module::Timer::hasActiveTimers() ||
                             !zane::TaskQueue::getInstance().isEmpty() ||
                             zane::ThreadPool::getInstance().hasPendingTasks() ||
-                            zane::module::HTTPServer::hasActiveServers();
+                            zane::builtin::hasActiveWork();
 
             if (!has_work) {
                 p_isolate->PerformMicrotaskCheckpoint();
@@ -685,8 +654,9 @@ class Runtime {
                 bool timers = zane::module::Timer::hasActiveTimers();
                 bool tasks = !zane::TaskQueue::getInstance().isEmpty();
                 bool threads = zane::ThreadPool::getInstance().hasPendingTasks();
-                
-                has_work = timers || tasks || threads;
+                bool builtin = zane::builtin::hasActiveWork();
+
+                has_work = timers || tasks || threads || builtin;
                 
                 if (!has_work) {
                     keep_running = false;

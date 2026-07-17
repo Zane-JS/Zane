@@ -103,7 +103,7 @@ $cppFlags = @(
     "/O2", "/Oi", "/Ot", "/MT", "/DNDEBUG",
     "/DV8_COMPRESS_POINTERS",
     "/nologo", "/c",
-    "/Iv8/include", "/Isrc", "/Ideps/zlib", "/Ideps/brotli/c/include", "/Ideps/zstd/lib", "/Ideps/llhttp/include", "/Ideps/trantor_install/include"
+    "/Iv8/include", "/Isrc", "/Ideps/zlib", "/Ideps/brotli/c/include", "/Ideps/zstd/lib", "/Ilibs/http", "/Ideps/trantor_install/include"
 )
 
 $linkFlags = @(
@@ -207,23 +207,7 @@ if (Needs-Rebuild -Sources @("deps/zstd/lib") -Target $zstdLib) {
 }
 $linkFlags += $zstdLib
 
-# 3.5: llhttp (HTTP Parser from Node.js)
-$llhttpSources = @(
-    "deps/llhttp/src/api.c",
-    "deps/llhttp/src/http.c",
-    "deps/llhttp/src/llhttp.c"
-)
-$llhttpLib = "build\lib\llhttp.lib"
-if (Needs-Rebuild -Sources @("deps/llhttp/src") -Target $llhttpLib) {
-    Write-Host "Rebuilding llhttp..."
-    & cl.exe $cppFlags /Ideps/llhttp/include /Fo"build\obj\" $llhttpSources
-    if ($LASTEXITCODE -ne 0) { exit 1 }
-    
-    $objs = $llhttpSources | ForEach-Object { "build\obj\" + [System.IO.Path]::GetFileNameWithoutExtension($_) + ".obj" }
-    & lib.exe /NOLOGO /OUT:$llhttpLib $objs
-    if ($LASTEXITCODE -ne 0) { exit 1 }
-}
-$linkFlags += $llhttpLib
+# 3.5: (reserved for custom HTTP parser — built as part of coreSources)
 
 # 3.6: Trantor (Networking Library)
 if (-not (Test-Path "deps/trantor_install/lib/trantor.lib")) {
@@ -236,8 +220,11 @@ $coreSources = @(
     "src/main.cpp", "src/temporal_shims.cpp", "src/module/console.cpp", "src/module/node/fs/fs.cpp", 
     "src/module/node/path/path.cpp", "src/module/node/os/os.cpp", "src/module/node/process/process.cpp", 
     "src/module/node/util/util.cpp", "src/module/node/buffer/buffer.cpp", "src/module/node/zlib/zlib.cpp",
-    "src/module/node/events/events.cpp", "src/module/node/stream/stream.cpp", "src/module/node/http/http.cpp",
-    "src/module/timer.cpp"
+    "src/module/node/events/events.cpp", "src/module/node/stream/stream.cpp",
+    "src/module/timer.cpp",
+    "src/module/builtin/builtin.cpp", "src/module/builtin/server/request.cpp",
+    "src/module/builtin/server/response.cpp", "src/module/builtin/server/server.cpp",
+    "libs/http/http_parser.cpp"
 )
 
 $coreObjs = @()

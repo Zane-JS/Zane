@@ -18,7 +18,8 @@ class AdaptiveIO {
 public:
     AdaptiveIO(int32_t burst_threshold = 20, int32_t window_ms = 50)
         : m_burst_threshold(burst_threshold), m_window_ms(window_ms),
-          m_calls_in_burst(0), m_last_flush(std::chrono::steady_clock::now()) {}
+          m_calls_in_burst(0), m_last_flush(std::chrono::steady_clock::now()),
+          m_last_burst_flush(std::chrono::steady_clock::now()) {}
 
     /**
      * Decisions whether the I/O should be flushed based on current burst frequency.
@@ -37,12 +38,21 @@ public:
             m_last_flush = now;
         }
 
-        // Logic: 
-        // 1. If we are in a burst (>= threshold), we DON'T flush. 
-        //    This allows the underlying buffers (libc or internal) to consolidate.
-        // 2. If we are NOT in a burst, we flush immediately to ensure interactivity.
+        // Logic:
+        // 1. If we are NOT in a burst, flush immediately for low latency.
+        // 2. If we ARE in a burst, still flush periodically (once per window_ms)
+        //    to prevent excessive buffer accumulation. Without this, all data
+        //    accumulated during the burst gets bulk-flushed at process exit,
+        //    overwhelming the Windows console pipe and causing Broken Pipe errors.
         if (m_calls_in_burst < m_burst_threshold) {
             flush();
+        } else {
+            auto since_burst_flush = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - m_last_burst_flush).count();
+            if (since_burst_flush >= m_window_ms) {
+                m_last_burst_flush = now;
+                flush();
+            }
         }
     }
 
@@ -73,6 +83,7 @@ private:
     int32_t m_window_ms;
     int32_t m_calls_in_burst;
     std::chrono::steady_clock::time_point m_last_flush;
+    std::chrono::steady_clock::time_point m_last_burst_flush;
     std::mutex m_mutex;
 };
 

@@ -181,8 +181,8 @@ class StyleChecker:
         if filepath.suffix not in ('.cpp', '.hpp'):
             return True
 
-        # Skip external files
-        skip_patterns = ['temporal_shims.cpp', 'v8', 'libs/']
+        # Skip external files (deps/, v8 shims, etc.)
+        skip_patterns = ['temporal_shims.cpp', 'v8', 'deps/']
         if any(pattern in str(filepath) for pattern in skip_patterns):
             return True
 
@@ -439,11 +439,16 @@ def main():
     checker = StyleChecker()
     if len(sys.argv) > 1:
         target = Path(sys.argv[1])
+        if target.is_file():
+            checker.check_file(target)
+        else:
+            checker.check_directory(target)
     else:
-        target = Path(__file__).parent.parent / 'src'
-    
-    if target.is_file(): checker.check_file(target)
-    else: checker.check_directory(target)
+        root = Path(__file__).parent.parent
+        for subdir in ('src', 'libs'):
+            d = root / subdir
+            if d.is_dir():
+                checker.check_directory(d)
     
     checker.print_report()
     sys.exit(0 if len(checker.errors) == 0 else 1)

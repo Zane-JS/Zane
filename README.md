@@ -68,8 +68,6 @@ The resulting `zane.exe` will be created in the root directory.
 
 ## Running
 
-Make sure `icudtl.dat` is in the same directory as `zane.exe`.
-
 ```powershell
 .\zane.exe main.js
 ```

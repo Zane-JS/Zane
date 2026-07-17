@@ -207,9 +207,18 @@ if (Needs-Rebuild -Sources @("deps/zstd/lib") -Target $zstdLib) {
 }
 $linkFlags += $zstdLib
 
-# 3.5: (reserved for custom HTTP parser — built as part of coreSources)
+# 3.4: Windows Icon Resource
+$resTarget = "build\obj\zane.res"
+if ($IsWindows -or (-not $IsMacOS)) {
+    if (Needs-Rebuild -Sources @("asset/zane.rc", "asset/favicon.ico") -Target $resTarget) {
+        Write-Host "Compiling Windows icon resource..."
+        & rc.exe /fo $resTarget asset\zane.rc
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+    }
+    $linkFlags += $resTarget
+}
 
-# 3.6: Trantor (Networking Library)
+# 3.5: Trantor (Networking Library)
 if (-not (Test-Path "deps/trantor_install/lib/trantor.lib")) {
     Write-Host "Trantor libraries not found. Running build_trantor.ps1..." -ForegroundColor Yellow
     & .\build_trantor.ps1 -Config $Config

@@ -1,0 +1,4 @@
+// Zane executable icon resource
+#include <winres.h>
+
+IDI_ICON1 ICON "favicon.ico"

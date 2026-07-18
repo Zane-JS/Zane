@@ -233,7 +233,9 @@ $coreSources = @(
     "src/module/timer.cpp",
     "src/module/builtin/builtin.cpp", "src/module/builtin/server/request.cpp",
     "src/module/builtin/server/response.cpp", "src/module/builtin/server/server.cpp",
-    "libs/http/http_parser.cpp"
+    "libs/http/http_parser.cpp",
+    "libs/http/http2.cpp",
+    "libs/http/http3.cpp"
 )
 
 $coreObjs = @()

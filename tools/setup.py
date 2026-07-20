@@ -9,21 +9,11 @@ import time
 # Thư mục chứa các thư viện phụ thuộc
 DEPS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "deps")
 
-# Danh sách các thư viện cần tải cho Zane (Kế hoạch: Trantor + llhttp)
+# Danh sách các thư viện cần tải cho Zane
 DEPENDENCIES = {
-    "openssl": {
-        "url": "https://github.com/openssl/openssl/releases/download/openssl-3.6.1/openssl-3.6.1.tar.gz",
-        "folder": "openssl",
-        "is_source": True
-    },
     "zlib": {
         "url": "https://github.com/madler/zlib/releases/download/v1.3.2/zlib132.zip",
         "folder": "zlib",
-        "is_source": True
-    },
-    "llhttp": {
-        "url": "https://github.com/nodejs/llhttp/archive/refs/tags/release/v9.2.1.zip",
-        "folder": "llhttp",
         "is_source": True
     },
     "trantor": {
@@ -119,6 +109,6 @@ def setup_dependencies():
                 print(f"🎉 Hoàn tất thiết lập {name}!")
 
 if __name__ == "__main__":
-    print("🚀 Bắt đầu thiết lập các thư viện phụ thuộc cho Zane (Trantor + llhttp)...")
+    print("🚀 Bắt đầu thiết lập các thư viện phụ thuộc cho Zane...")
     setup_dependencies()
     print("\n✨ Tất cả thư viện đã sẵn sàng trong thư mục /deps")

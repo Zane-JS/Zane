@@ -72,6 +72,11 @@ namespace fs = std::filesystem;
 namespace zane {
 namespace module {
 
+// Maximum size of a single readFileSync / readFile read. Guards against
+// unbounded heap allocation (OOM) and keeps the result safely below INT32_MAX
+// so the later static_cast<int32_t> used by V8 string APIs cannot overflow.
+static constexpr int64_t kMaxReadFileSize = 512LL * 1024 * 1024; // 512 MB
+
 struct DirData {
     fs::path m_path;
     fs::directory_iterator m_it;
@@ -110,6 +115,39 @@ static std::wstring Utf8ToWide(const std::string& utf8) {
     MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), (int32_t)utf8.length(), &wide[0], size);
     return wide;
 }
+
+// Detects Windows reserved device names (CON, NUL, PRN, AUX, COM1-9, LPT1-9)
+// anywhere in the path. The reservation is by basename ignoring any extension
+// (e.g. "CON.txt" is still reserved) and is case-insensitive. Windows matches
+// on the portion before the FIRST dot, so "CON.foo.bar" is also CON.
+static bool isWindowsReservedName(const char* p_path) {
+    static const char* const kReserved[] = {
+        "CON", "NUL", "PRN", "AUX",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    };
+    // Walk each path component; a device name at any segment (e.g. "foo\\CON"
+    // or "CON\\bar") triggers reservation.
+    std::string path(p_path);
+    size_t start = 0;
+    size_t sep;
+    while ((sep = path.find_first_of("/\\", start)) != std::string::npos || start < path.size()) {
+        std::string comp = (sep != std::string::npos)
+            ? path.substr(start, sep - start)
+            : path.substr(start);
+        if (!comp.empty()) {
+            // Compare the part before the first dot (Windows device semantics).
+            size_t dot = comp.find('.');
+            std::string stem = (dot != std::string::npos) ? comp.substr(0, dot) : comp;
+            for (const char* r : kReserved) {
+                if (_stricmp(stem.c_str(), r) == 0) return true;
+            }
+        }
+        if (sep == std::string::npos) break;
+        start = sep + 1;
+    }
+    return false;
+}
 #endif
 
 static inline bool isPathSafe(const char* p_path) {
@@ -120,6 +158,13 @@ static inline bool isPathSafe(const char* p_path) {
     for (const char* p = p_path; *p; ++p) {
         if (*p == '.' && *(p + 1) == '.') return false;
     }
+#ifdef _WIN32
+    // Block Windows reserved device names (CON, NUL, PRN, AUX, COM1-9, LPT1-9).
+    // These are reserved by basename without extension (e.g. CON.txt is also
+    // reserved) and matched case-insensitively. Opening them can hang on console
+    // input (DoS) or silently discard data.
+    if (isWindowsReservedName(p_path)) return false;
+#endif
     return true;
 }
 
@@ -421,8 +466,16 @@ void FS::readFileSync(const v8::FunctionCallbackInfo<v8::Value>& args) {
     int64_t size = file.tellg();
     file.seekg(0, std::ios::beg);
 
+    // Guard against unbounded allocation (OOM) and int32 overflow in the V8
+    // string API below (which takes int32_t length).
+    if (size < 0 || size > kMaxReadFileSize) {
+        p_isolate->ThrowException(
+            v8::String::NewFromUtf8(p_isolate, "Error: File too large to read into memory").ToLocalChecked());
+        return;
+    }
+
     if (encoding == "utf8") {
-        std::string content(size, '\0');
+        std::string content(static_cast<size_t>(size), '\0');
         if (file.read(&content[0], size)) {
             args.GetReturnValue().Set(
                 v8::String::NewFromUtf8(
@@ -1884,8 +1937,13 @@ void FS::readFile(const v8::FunctionCallbackInfo<v8::Value>& args) {
         } else {
             std::streamsize size = file.tellg();
             file.seekg(0, std::ios::beg);
-            p_ctx->m_binary_content.resize(static_cast<size_t>(size));
-            file.read(p_ctx->m_binary_content.data(), size);
+            if (size < 0 || static_cast<int64_t>(size) > kMaxReadFileSize) {
+                p_ctx->m_is_error = true;
+                p_ctx->m_error_msg = "Error: File too large to read into memory";
+            } else {
+                p_ctx->m_binary_content.resize(static_cast<size_t>(size));
+                file.read(p_ctx->m_binary_content.data(), size);
+            }
         }
         TaskQueue::getInstance().enqueue(p_task);
     });
@@ -1970,8 +2028,13 @@ void FS::readFilePromise(const v8::FunctionCallbackInfo<v8::Value>& args) {
         } else {
             std::streamsize size = file.tellg();
             file.seekg(0, std::ios::beg);
-            p_ctx->m_binary_content.resize(static_cast<size_t>(size));
-            file.read(p_ctx->m_binary_content.data(), size);
+            if (size < 0 || static_cast<int64_t>(size) > kMaxReadFileSize) {
+                p_ctx->m_is_error = true;
+                p_ctx->m_error_msg = "Error: File too large to read into memory";
+            } else {
+                p_ctx->m_binary_content.resize(static_cast<size_t>(size));
+                file.read(p_ctx->m_binary_content.data(), size);
+            }
         }
         TaskQueue::getInstance().enqueue(p_task);
     });

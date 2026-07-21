@@ -18,7 +18,7 @@ Zane embraces V8 as its foundation, not as an implementation detail. Rather than
 
 ## Features
 
-- **Pure C++17/20** — zero overhead, built with the latest MSVC toolchain
+- **Pure C++23** — zero overhead, built with the latest MSVC toolchain
 - **Monolithic build** — single `zane.exe`, no DLL dependencies
 - **Builtin HTTP server** — `Zane.serve({ fetch, port })` with hand-written HTTP/1.1 parser
 - **Custom HTTP parser** (libs/http) — no llhttp, no code generation, pure C++ state machine

@@ -1,5 +1,5 @@
-#ifndef Zane_MODULE_UTIL_H
-#define Zane_MODULE_UTIL_H
+#ifndef ZANE_MODULE_UTIL_H
+#define ZANE_MODULE_UTIL_H
 
 #include "v8.h"
 #include <cstdio>
@@ -69,4 +69,4 @@ class Util {
 } // namespace module
 } // namespace zane
 
-#endif // Zane_MODULE_UTIL_H
+#endif // ZANE_MODULE_UTIL_H

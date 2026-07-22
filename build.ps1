@@ -99,7 +99,7 @@ if (Test-Path "v8/libs/v8_monolith.lib") {
 
 # --- Flags Setup ---
 $cppFlags = @(
-    "/std:c++23", "/Zc:__cplusplus", "/EHsc", 
+    "/std:c++23preview", "/Zc:__cplusplus", "/EHsc", 
     "/O2", "/Oi", "/Ot", "/MT", "/DNDEBUG",
     "/DV8_COMPRESS_POINTERS",
     "/nologo", "/c",

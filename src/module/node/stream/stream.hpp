@@ -1,5 +1,5 @@
-#ifndef Zane_MODULE_STREAM_H
-#define Zane_MODULE_STREAM_H
+#ifndef ZANE_MODULE_STREAM_H
+#define ZANE_MODULE_STREAM_H
 
 #include "v8.h"
 #include "../events/events.hpp"
@@ -194,4 +194,4 @@ class Stream {
 } // namespace module
 } // namespace zane
 
-#endif // Zane_MODULE_STREAM_H
+#endif // ZANE_MODULE_STREAM_H

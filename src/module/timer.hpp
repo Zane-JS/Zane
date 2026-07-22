@@ -1,5 +1,5 @@
-#ifndef Zane_TIMER_H
-#define Zane_TIMER_H
+#ifndef ZANE_TIMER_H
+#define ZANE_TIMER_H
 
 #include "v8.h"
 #include <chrono>
@@ -45,4 +45,4 @@ class Timer {
 } // namespace module
 } // namespace zane
 
-#endif // Zane_TIMER_H
+#endif // ZANE_TIMER_H

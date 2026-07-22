@@ -13,6 +13,7 @@ bin/
 node_modules/
 .env
 deps/
+build/
 
 # Temporary files
 mega_bench_tmp_*

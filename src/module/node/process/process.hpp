@@ -1,5 +1,5 @@
-#ifndef Zane_MODULE_PROCESS_H
-#define Zane_MODULE_PROCESS_H
+#ifndef ZANE_MODULE_PROCESS_H
+#define ZANE_MODULE_PROCESS_H
 
 #include "v8.h"
 #include <map>
@@ -56,4 +56,4 @@ class Process {
 } // namespace module
 } // namespace zane
 
-#endif // Zane_MODULE_PROCESS_H
+#endif // ZANE_MODULE_PROCESS_H

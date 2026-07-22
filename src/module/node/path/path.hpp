@@ -1,5 +1,5 @@
-#ifndef Zane_MODULE_PATH_H
-#define Zane_MODULE_PATH_H
+#ifndef ZANE_MODULE_PATH_H
+#define ZANE_MODULE_PATH_H
 
 #include "v8.h"
 
@@ -52,4 +52,4 @@ class Path {
 } // namespace module
 } // namespace zane
 
-#endif // Zane_MODULE_PATH_H
+#endif // ZANE_MODULE_PATH_H

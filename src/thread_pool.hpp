@@ -1,5 +1,5 @@
-#ifndef Zane_THREAD_POOL_H
-#define Zane_THREAD_POOL_H
+#ifndef ZANE_THREAD_POOL_H
+#define ZANE_THREAD_POOL_H
 
 #include <condition_variable>
 #include <cstdint>

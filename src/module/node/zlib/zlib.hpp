@@ -1,5 +1,5 @@
-#ifndef Zane_MODULE_ZLIB_H
-#define Zane_MODULE_ZLIB_H
+#ifndef ZANE_MODULE_ZLIB_H
+#define ZANE_MODULE_ZLIB_H
 
 #include "v8.h"
 

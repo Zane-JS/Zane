@@ -1,5 +1,5 @@
-#ifndef Zane_MODULE_OS_H
-#define Zane_MODULE_OS_H
+#ifndef ZANE_MODULE_OS_H
+#define ZANE_MODULE_OS_H
 
 #include "v8.h"
 
@@ -32,4 +32,4 @@ class OS {
 } // namespace module
 } // namespace zane
 
-#endif // Zane_MODULE_OS_H
+#endif // ZANE_MODULE_OS_H

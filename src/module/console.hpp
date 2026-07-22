@@ -1,5 +1,5 @@
-#ifndef Zane_CONSOLE_H
-#define Zane_CONSOLE_H
+#ifndef ZANE_CONSOLE_H
+#define ZANE_CONSOLE_H
 
 #include "v8.h"
 #include <cstdint>
@@ -39,4 +39,4 @@ class Console {
 } // namespace module
 } // namespace zane
 
-#endif // Zane_CONSOLE_H
+#endif // ZANE_CONSOLE_H

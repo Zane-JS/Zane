@@ -101,10 +101,14 @@ if (Test-Path "v8/libs/v8_monolith.lib") {
 $cppFlags = @(
     "/std:c++23preview", "/Zc:__cplusplus", "/EHsc", 
     "/O2", "/Oi", "/Ot", "/MT", "/DNDEBUG",
+    "/GS", "/W4",
     "/DV8_COMPRESS_POINTERS",
     "/nologo", "/c",
-    "/Iv8/include", "/Isrc", "/Ideps/zlib", "/Ideps/brotli/c/include", "/Ideps/zstd/lib", "/Ilibs/http", "/Ideps/trantor_install/include"
+    "/Iv8/include", "/Isrc", "/Ideps/zlib", "/Ideps/brotli/c/include", "/Ideps/zstd/lib", "/Ilibs/http", "/Ideps/trantor_install/include",
+    "/external:Iv8/include", "/external:W0"
 )
+
+$cppLinkFlags = $cppFlags + "/analyze"
 
 $linkFlags = @(
     "/OUT:zane.exe", "/SUBSYSTEM:CONSOLE", "/MACHINE:X64", "/NOLOGO",
@@ -244,7 +248,7 @@ foreach ($src in $coreSources) {
     $coreObjs += $obj
     if (Needs-Rebuild -Sources $src -Target $obj) {
         Write-Host "Compiling $src..."
-        & cl.exe $cppFlags /Fo$obj $src
+        & cl.exe $cppLinkFlags /Fo$obj $src
         if ($LASTEXITCODE -ne 0) { exit 1 }
     }
 }

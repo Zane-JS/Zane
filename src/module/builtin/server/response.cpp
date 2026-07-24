@@ -5,9 +5,24 @@ namespace builtin {
 
 v8::Persistent<v8::ObjectTemplate> Response::m_template;
 
+bool containsHeaderInjection(const std::string& s) {
+    // Reject any CR / LF / NUL: these terminate header lines and let an
+    // attacker inject arbitrary headers (response splitting) or smuggle a
+    // second response. NUL also breaks C-string handling downstream.
+    return s.find('\r') != std::string::npos ||
+           s.find('\n') != std::string::npos ||
+           s.find('\0') != std::string::npos;
+}
+
 Response::Response(SendCallback send_cb) : m_send_cb(std::move(send_cb)) {}
 
 void Response::setHeader(const std::string& name, const std::string& value) {
+    // Defense-in-depth: the serializer (buildResponse) also strips CRLF, but
+    // reject early at the application-facing API so the caller gets a clear
+    // error instead of a silently mangled response.
+    if (name.empty() || containsHeaderInjection(name) || containsHeaderInjection(value)) {
+        return; // JS-facing setHeader() throws instead; internal callers ignore.
+    }
     m_headers[name] = value;
 }
 
@@ -65,6 +80,8 @@ v8::Local<v8::ObjectTemplate> Response::createTemplate(v8::Isolate* p_isolate) {
              v8::FunctionTemplate::New(p_isolate, sendJsonMethod));
     tpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "end"),
              v8::FunctionTemplate::New(p_isolate, endMethod));
+    tpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "setHeader"),
+             v8::FunctionTemplate::New(p_isolate, setHeaderMethod));
 
     m_template.Reset(p_isolate, tpl);
     return handle_scope.Escape(tpl);
@@ -153,6 +170,43 @@ void Response::endMethod(const v8::FunctionCallbackInfo<v8::Value>& args) {
         }
     }
     p_res->end();
+}
+
+void Response::setHeaderMethod(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    v8::Isolate* p_isolate = args.GetIsolate();
+    Response* p_res = unwrap(args.This());
+    if (!p_res) return;
+
+    // Mirror node:http: name and value are coerced to strings.
+    if (args.Length() < 2) {
+        p_isolate->ThrowException(v8::Exception::TypeError(
+            v8::String::NewFromUtf8Literal(p_isolate,
+                "res.setHeader(name, value) requires 2 arguments")));
+        return;
+    }
+
+    v8::Local<v8::Context> context = p_isolate->GetCurrentContext();
+    v8::String::Utf8Value name_utf8(p_isolate, args[0]);
+    v8::String::Utf8Value value_utf8(p_isolate, args[1]);
+    if (!*name_utf8 || !*value_utf8) {
+        p_isolate->ThrowException(v8::Exception::TypeError(
+            v8::String::NewFromUtf8Literal(p_isolate,
+                "res.setHeader() name and value must be strings")));
+        return;
+    }
+
+    std::string name(*name_utf8, name_utf8.length());
+    std::string value(*value_utf8, value_utf8.length());
+
+    // Reject anything that could split the header / smuggle a response.
+    if (name.empty() || containsHeaderInjection(name) || containsHeaderInjection(value)) {
+        p_isolate->ThrowException(v8::Exception::RangeError(
+            v8::String::NewFromUtf8Literal(p_isolate,
+                "Invalid header: name/value must not be empty or contain CR/LF/NUL")));
+        return;
+    }
+
+    p_res->m_headers[name] = value;
 }
 
 } // namespace builtin

@@ -32,13 +32,18 @@ class Response {
     void end();
     auto hasEnded() const -> bool { return m_has_ended; }
 
-    // V8 object wrapper
+    // V8 object wrapper. Ownership of `this` is transferred to the JS object
+    // and freed via the weak callback once the response has ended AND the JS
+    // wrapper is GC'd. Callers must NOT delete the returned object.
     v8::Local<v8::Object> wrap(v8::Isolate* p_isolate, v8::Local<v8::Context> context);
 
     // Template factory
     static v8::Local<v8::ObjectTemplate> createTemplate(v8::Isolate* p_isolate);
 
   private:
+    // V8 weak callback — frees the C++ Response only once it has ended, so an
+    // in-flight async response is never freed out from under the sender.
+    static void weakCallback(const v8::WeakCallbackInfo<Response>& data);
     int32_t m_status = 200;
     std::map<std::string, std::string> m_headers;
     bool m_has_ended = false;

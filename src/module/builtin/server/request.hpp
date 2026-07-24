@@ -25,13 +25,17 @@ class Request {
     v8::Local<v8::Value> json(v8::Isolate* p_isolate, v8::Local<v8::Context> context);
     v8::Local<v8::String> text(v8::Isolate* p_isolate);
 
-    // V8 object wrapper
+    // V8 object wrapper. Ownership of `this` is transferred to the JS object:
+    // it is freed via the weak callback when V8 GCs the wrapper. Callers must
+    // NOT delete the returned object.
     v8::Local<v8::Object> wrap(v8::Isolate* p_isolate, v8::Local<v8::Context> context);
 
     // Template factory
     static v8::Local<v8::ObjectTemplate> createTemplate(v8::Isolate* p_isolate);
 
   private:
+    // V8 weak callback — frees the C++ Request when the JS wrapper is GC'd.
+    static void weakCallback(const v8::WeakCallbackInfo<Request>& data);
     std::string m_method;
     std::string m_path;
     std::string m_pathname; // Parsed path (before ?)

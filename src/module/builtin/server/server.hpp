@@ -21,9 +21,11 @@ namespace builtin {
 class Request;
 class Response;
 
-// Callback type: handle HTTP request
-// Takes method, path, headers, body → returns (status, response_headers, response_body)
-using RequestHandler = std::function<void(std::unique_ptr<Request> p_req, std::unique_ptr<Response> p_res)>;
+// Callback type: handle HTTP request.
+// NOTE: p_req and p_res are raw, non-owning pointers. Ownership is transferred
+// to the V8 wrapper inside the handler (via Request::wrap / Response::wrap),
+// which frees them through a V8 weak callback. The handler must NOT delete them.
+using RequestHandler = std::function<void(Request* p_req, Response* p_res)>;
 
 class Server {
   public:

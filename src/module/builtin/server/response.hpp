@@ -15,6 +15,11 @@ namespace builtin {
 using SendCallback = std::function<void(int32_t status, const std::map<std::string, std::string>& headers,
                                          const std::vector<uint8_t>& body)>;
 
+// True if `s` contains a character that could terminate / split an HTTP header
+// line (CR, LF) or otherwise corrupt the wire format (NUL). Used to reject
+// header injection / response splitting at the application-facing API.
+bool containsHeaderInjection(const std::string& s);
+
 class Response {
   public:
     explicit Response(SendCallback send_cb);
@@ -62,6 +67,9 @@ class Response {
     static void sendMethod(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void sendJsonMethod(const v8::FunctionCallbackInfo<v8::Value>& args);
     static void endMethod(const v8::FunctionCallbackInfo<v8::Value>& args);
+    // setHeader(name, value) — validates and rejects CR/LF/NUL to prevent
+    // HTTP response splitting / header injection from app-supplied data.
+    static void setHeaderMethod(const v8::FunctionCallbackInfo<v8::Value>& args);
 
     static Response* unwrap(v8::Local<v8::Object> obj);
 };

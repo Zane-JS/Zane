@@ -77,7 +77,24 @@ v8::Local<v8::Object> Response::wrap(v8::Isolate* p_isolate, v8::Local<v8::Conte
     v8::Local<v8::Object> obj = tpl->NewInstance(context).ToLocalChecked();
     obj->SetInternalField(0, v8::External::New(p_isolate, this));
 
+    // Transfer ownership to V8. The weak callback only deletes the object once
+    // the response has ended, so a still-pending async response is kept alive
+    // even if JS drops its reference to the wrapper before calling send().
+    v8::Global<v8::Object> global_obj(p_isolate, obj);
+    global_obj.SetWeak(this, weakCallback, v8::WeakCallbackType::kParameter);
+
     return handle_scope.Escape(obj);
+}
+
+void Response::weakCallback(const v8::WeakCallbackInfo<Response>& data) {
+    Response* p_res = data.GetParameter();
+    // Safety net: an async fetch handler may drop the response object before it
+    // has ended. Force-end it (empty body) so the underlying TCP reply is still
+    // flushed and the connection is released, then free the memory.
+    if (!p_res->m_has_ended) {
+        p_res->send("");
+    }
+    delete p_res;
 }
 
 Response* Response::unwrap(v8::Local<v8::Object> obj) {

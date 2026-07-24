@@ -101,7 +101,7 @@ if (Test-Path "v8/libs/v8_monolith.lib") {
 $cppFlags = @(
     "/std:c++23preview", "/Zc:__cplusplus", "/EHsc", 
     "/O2", "/Oi", "/Ot", "/MT", "/DNDEBUG",
-    "/GS", "/W4",
+    "/GS",
     "/DV8_COMPRESS_POINTERS",
     "/nologo", "/c",
     "/Iv8/include", "/Isrc", "/Ideps/zlib", "/Ideps/brotli/c/include", "/Ideps/zstd/lib", "/Ilibs/http", "/Ideps/trantor_install/include",

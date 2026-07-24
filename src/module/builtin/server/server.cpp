@@ -18,6 +18,51 @@ namespace builtin {
 
 std::atomic<int32_t> Server::m_active_server_count{0};
 
+// State carried into Promise resolve/reject callbacks. Held in a
+// FunctionTemplate's Data, so the callbacks (which must be capture-less) can
+// recover it via args.Data(). It owns the strong references that keep the
+// Request/Response wrappers (and thus the C++ objects) alive while an async
+// fetch handler's Promise is pending.
+struct PromiseState {
+    v8::Global<v8::Object>* p_req_wrap;
+    v8::Global<v8::Object>* p_res_wrap;
+    v8::Global<v8::Promise>* p_promise_wrap;
+    Response* p_res; // non-owning; owned by the wrapper above (weak-callback freed)
+    std::shared_ptr<v8::Global<v8::Function>> p_error_global;
+};
+
+// Runs on Promise resolve: end the response if the app forgot, then free state.
+void onPromiseFulfilled(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    auto* p_state = static_cast<PromiseState*>(args.Data().As<v8::External>()->Value());
+    if (!p_state) return;
+    if (p_state->p_res && !p_state->p_res->hasEnded()) p_state->p_res->end();
+    delete p_state->p_req_wrap;
+    delete p_state->p_res_wrap;
+    delete p_state->p_promise_wrap;
+    delete p_state;
+}
+
+// Runs on Promise reject: surface the error, send 500 if not ended, then free.
+void onPromiseRejected(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    v8::Isolate* p_isolate = args.GetIsolate();
+    auto* p_state = static_cast<PromiseState*>(args.Data().As<v8::External>()->Value());
+    if (!p_state) return;
+    if (p_state->p_error_global) {
+        v8::HandleScope hs(p_isolate);
+        v8::Local<v8::Context> ctx = p_isolate->GetCurrentContext();
+        v8::Local<v8::Function> error_local = p_state->p_error_global->Get(p_isolate);
+        v8::Local<v8::Value> err_argv[1] = {args[0]};
+        (void)error_local->Call(ctx, ctx->Global(), 1, err_argv);
+    }
+    if (p_state->p_res && !p_state->p_res->hasEnded()) {
+        p_state->p_res->send("Internal Server Error");
+    }
+    delete p_state->p_req_wrap;
+    delete p_state->p_res_wrap;
+    delete p_state->p_promise_wrap;
+    delete p_state;
+}
+
 // ============================================================================
 // Server Implementation
 // ============================================================================
@@ -70,15 +115,17 @@ bool Server::start(uint16_t port, const std::string& hostname, RequestHandler ha
             // Get parsed request
             zane::http::Request& parsed = parser.result();
 
-            // Create Zane builtin Request and Response
-            auto p_req = std::make_unique<Request>(
+            // Create Zane builtin Request and Response (heap-allocated; ownership
+            // is transferred to their V8 wrappers inside the handler, which free
+            // them via a weak callback on GC).
+            auto* p_req = new Request(
                 std::move(parsed.m_method),
                 std::move(parsed.m_url),
                 std::move(parsed.m_headers),
                 std::move(parsed.m_body)
             );
 
-            auto p_res = std::make_unique<Response>(
+            auto* p_res = new Response(
                 [p_conn](int32_t status, const std::map<std::string, std::string>& headers,
                           const std::vector<uint8_t>& body) {
                     std::string http_resp = zane::http::buildResponse(
@@ -88,7 +135,7 @@ bool Server::start(uint16_t port, const std::string& hostname, RequestHandler ha
             );
 
             if (handler) {
-                handler(std::move(p_req), std::move(p_res));
+                handler(p_req, p_res);
             }
         });
 
@@ -210,20 +257,24 @@ void Server::serveCallback(const v8::FunctionCallbackInfo<v8::Value>& args) {
     }
     auto p_context_global = std::make_shared<v8::Global<v8::Context>>(p_isolate, context);
 
-    // Create request handler that calls JS fetch
+    // Create request handler that calls JS fetch.
+    // p_req/p_res are heap-allocated and NOT owned here: ownership transfers to
+    // the V8 wrapper objects (Request::wrap / Response::wrap), which free them
+    // via a weak callback on GC. This keeps them alive for as long as JS can
+    // reach them — including the async case where fetch() returns a Promise.
     RequestHandler handler = [p_isolate, p_context_global, p_fetch_global, p_error_global](
-                                 std::unique_ptr<Request> p_req, std::unique_ptr<Response> p_res) {
+                                 Request* p_req, Response* p_res) {
         v8::Locker locker(p_isolate);
         v8::Isolate::Scope isolate_scope(p_isolate);
         v8::HandleScope handle_scope(p_isolate);
         v8::Local<v8::Context> context = p_context_global->Get(p_isolate);
         v8::Context::Scope context_scope(context);
 
-        Request* p_raw_req = p_req.get();
-        Response* p_raw_res = p_res.get();
-
-        v8::Local<v8::Object> req_obj = p_raw_req->wrap(p_isolate, context);
-        v8::Local<v8::Object> res_obj = p_raw_res->wrap(p_isolate, context);
+        // Wrap into V8 objects. This transfers C++ ownership to V8 (weak-callback
+        // cleanup), so the objects survive this lambda returning — even if the
+        // JS fetch handler returns a pending Promise that resolves later.
+        v8::Local<v8::Object> req_obj = p_req->wrap(p_isolate, context);
+        v8::Local<v8::Object> res_obj = p_res->wrap(p_isolate, context);
 
         v8::Local<v8::Value> argv[2] = {req_obj, res_obj};
         v8::Local<v8::Function> fetch_local = p_fetch_global->Get(p_isolate);
@@ -237,27 +288,62 @@ void Server::serveCallback(const v8::FunctionCallbackInfo<v8::Value>& args) {
                 v8::Local<v8::Value> err_argv[1] = {try_catch.Exception()};
                 (void)error_local->Call(context, context->Global(), 1, err_argv);
             }
-            if (!p_raw_res->hasEnded()) {
-                p_raw_res->send("Internal Server Error");
+            if (!p_res->hasEnded()) {
+                p_res->send("Internal Server Error");
             }
             return;
         }
 
-        // Handle Promise return from fetch
-        if (!result.IsEmpty() && !result.ToLocalChecked()->IsUndefined() &&
-            result.ToLocalChecked()->IsPromise()) {
-            v8::Local<v8::Promise> promise = result.ToLocalChecked().As<v8::Promise>();
+        // Handle Promise return from fetch.
+        if (result.IsEmpty()) return;
+        v8::Local<v8::Value> ret = result.ToLocalChecked();
+        if (ret->IsUndefined() || !ret->IsPromise()) return;
 
-            if (promise->State() == v8::Promise::kRejected) {
-                if (p_error_global) {
-                    v8::Local<v8::Function> error_local = p_error_global->Get(p_isolate);
-                    v8::Local<v8::Value> err_argv[1] = {promise->Result()};
-                    (void)error_local->Call(context, context->Global(), 1, err_argv);
-                }
-                if (!p_raw_res->hasEnded()) {
-                    p_raw_res->send("Internal Server Error");
-                }
+        v8::Local<v8::Promise> promise = ret.As<v8::Promise>();
+        const auto send_error = [&](v8::Local<v8::Value> err) {
+            if (p_error_global) {
+                v8::Local<v8::Function> error_local = p_error_global->Get(p_isolate);
+                v8::Local<v8::Value> err_argv[1] = {err};
+                (void)error_local->Call(context, context->Global(), 1, err_argv);
             }
+            if (!p_res->hasEnded()) {
+                p_res->send("Internal Server Error");
+            }
+        };
+
+        switch (promise->State()) {
+            case v8::Promise::kFulfilled:
+                // Resolved synchronously: app already sent the response itself.
+                if (!p_res->hasEnded()) p_res->end();
+                break;
+            case v8::Promise::kRejected:
+                send_error(promise->Result());
+                break;
+            case v8::Promise::kPending:
+                // Async handler: keep res/req alive until the promise settles by
+                // holding strong references to the wrappers. On resolve, end the
+                // response if the app forgot; on reject, surface the error.
+                promise->MarkAsHandled();
+                {
+                    auto* p_state = new PromiseState{
+                        /*p_req_wrap=*/     new v8::Global<v8::Object>(p_isolate, req_obj),
+                        /*p_res_wrap=*/     new v8::Global<v8::Object>(p_isolate, res_obj),
+                        /*p_promise_wrap=*/ new v8::Global<v8::Promise>(p_isolate, promise),
+                        /*p_res=*/          p_res,
+                        /*p_error_global=*/ p_error_global,
+                    };
+
+                    v8::Local<v8::External> data = v8::External::New(p_isolate, p_state);
+                    v8::Local<v8::Function> on_fulfilled =
+                        v8::FunctionTemplate::New(p_isolate, onPromiseFulfilled, data)
+                            ->GetFunction(context).ToLocalChecked();
+                    v8::Local<v8::Function> on_rejected =
+                        v8::FunctionTemplate::New(p_isolate, onPromiseRejected, data)
+                            ->GetFunction(context).ToLocalChecked();
+
+                    promise->Then(context, on_fulfilled, on_rejected).IsEmpty();
+                }
+                break;
         }
     };
 

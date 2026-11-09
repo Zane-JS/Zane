@@ -2,18 +2,14 @@
 #define ZANE_BUILTIN_SERVER_H
 
 #include "v8.h"
+#include <drogon/HttpRequest.h>
+#include <drogon/HttpResponse.h>
 #include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
-
-// Forward declarations
-namespace trantor {
-class TcpServer;
-class TcpConnection;
-class EventLoopThread;
-} // namespace trantor
+#include <thread>
 
 namespace zane {
 namespace builtin {
@@ -21,18 +17,28 @@ namespace builtin {
 class Request;
 class Response;
 
-// Callback type: handle HTTP request.
-// NOTE: p_req and p_res are raw, non-owning pointers. Ownership is transferred
-// to the V8 wrapper inside the handler (via Request::wrap / Response::wrap),
-// which frees them through a V8 weak callback. The handler must NOT delete them.
-using RequestHandler = std::function<void(Request* p_req, Response* p_res)>;
+// Callback type: handle HTTP request. The handler runs on a Drogon event-loop
+// thread; the V8 isolate is locked/unlocked inside the handler.
+//
+// NOTE: `p_req` and `p_res` are raw, non-owning pointers. Ownership is
+// transferred to the V8 wrapper inside the handler (via Request::wrap /
+// Response::wrap), which frees them through a V8 weak callback. The handler
+// must NOT delete them. The Drogon response callback (`cb`) is invoked exactly
+// once from `Response::finalize()` — it may be called from the V8 thread after
+// a pending Promise settles; Drogon dispatches the actual socket write on the
+// connection's event-loop thread (queueInLoop), so this is thread-safe.
+using RequestHandler = std::function<void(
+    const drogon::HttpRequestPtr& req,
+    std::function<void(const drogon::HttpResponsePtr&)>&& cb)>;
 
 class Server {
   public:
     Server();
     ~Server();
 
-    // Start listening
+    // Start listening (registers a listener + default handler on the shared
+    // Drogon app singleton, then runs the Drogon event loop on a background
+    // thread). `stop()` must be called to tear it down.
     bool start(
         uint16_t port, 
         const std::string& hostname, 
@@ -41,7 +47,7 @@ class Server {
         const std::string& cert_path,
         const std::string& key_path);
 
-    // Stop server
+    // Stop server (quits the Drogon app and joins the loop thread).
     void stop(std::function<void()> on_stop = nullptr);
 
     // Check if server has active connections
@@ -59,15 +65,13 @@ class Server {
     bool isStopped() const { return !m_running; }
 
   private:
-    std::unique_ptr<trantor::TcpServer> up_tcp_server;
-    std::unique_ptr<trantor::EventLoopThread> up_loop_thread;
+    // Drogon's event loop runs on this thread; it returns when quit() is
+    // called. Stopped/joined in stop().
+    std::thread m_loop_thread;
     std::function<void()> m_on_stop;
     bool m_running = false;
 
     static std::atomic<int32_t> m_active_server_count;
-
-    // Internal Trantor callbacks
-    void onConnection(const std::shared_ptr<trantor::TcpConnection>& p_conn);
 };
 
 } // namespace builtin

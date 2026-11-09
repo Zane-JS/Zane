@@ -1,16 +1,14 @@
 #include "server.hpp"
 #include "request.hpp"
 #include "response.hpp"
+#include "task_queue.hpp"
 
-#include <trantor/net/TcpServer.h>
-#include <trantor/net/EventLoop.h>
-#include <trantor/net/EventLoopThread.h>
-#include <trantor/net/TcpConnection.h>
+#include <drogon/HttpAppFramework.h>
+#include <drogon/HttpRequest.h>
+#include <drogon/HttpResponse.h>
+#include <drogon/HttpTypes.h>
 #include <trantor/utils/Logger.h>
-#include <atomic>
-
-//https://github.com/Zane-JS/Zane-HTTPParser
-#include <http_parser.hpp> 
+#include <cctype>
 #include <cstring>
 #include <sstream>
 
@@ -18,18 +16,6 @@ namespace zane {
 namespace builtin {
 
 std::atomic<int32_t> Server::m_active_server_count{0};
-
-// Issue #9: cap concurrent connections to bound FD and memory use.
-// Trantor doesn't expose a built-in max-connection setting, so we
-// track the count ourselves and close any connection beyond the cap.
-// 10k is generous for a single-process JS runtime and well below the
-// default Linux ulimit of 1024 fd * 10. We do NOT install a per-
-// connection high-water-mark callback here because Trantor's public
-// API doesn't expose disableReading(); the per-connection write buffer
-// is still bounded by the response size which is already capped by
-// the parser's kMaxBodySize.
-static constexpr size_t kMaxConnections = 10000;
-static std::atomic<size_t> g_active_connections{0};
 
 // State carried into Promise resolve/reject callbacks. Held in a
 // FunctionTemplate's Data, so the callbacks (which must be capture-less) can
@@ -96,170 +82,36 @@ bool Server::start(
 ) {
     if (m_running) return false;
 
-    // Create event loop thread (loop runs on background thread)
-    up_loop_thread = std::make_unique<trantor::EventLoopThread>("ZaneServer");
-    up_loop_thread->run();
-
-    // Wait for loop to be ready
-    trantor::EventLoop* p_loop = nullptr;
-    while (!p_loop) {
-        p_loop = up_loop_thread->getLoop();
-        if (!p_loop) std::this_thread::yield();
+    auto& app = drogon::app();
+    try {
+        // NOTE: if this Zane process ever serves two listeners on the same
+        // port, addListener() throws; we surface that as a start failure.
+        app.addListener(hostname, port, use_tls, cert_path, key_path);
+    } catch (const std::exception& e) {
+        LOG_ERROR << "Failed to add listener: " << e.what();
+        return false;
     }
 
-    trantor::InetAddress addr(hostname, port, false);
-    up_tcp_server = std::make_unique<trantor::TcpServer>(p_loop, addr, "ZaneServer");
+    // Disable Drogon's implicit home page rewrite ("/" -> "/index.html"
+    // before routing): Zane.serve() apps own the URL space via fetch().
+    app.setHomePage("");
 
-    // Issue #8: slowloris defense. Without an idle timeout, an attacker can
-    // open a connection, send one byte at a time, and hold the socket open
-    // forever — exhausting FDs and memory. Trantor's kickoffIdleConnections
-    // walks the live connection set every `timeout` seconds and closes any
-    // connection that hasn't been read from or written to. 30s is enough for
-    // normal HTTP traffic (including chunked uploads on slow links) and
-    // tight enough that a slowloris attacker can't keep many sockets alive.
-    up_tcp_server->kickoffIdleConnections(30);
+    // Issue #9 (connection cap) is now enforced by Drogon's own limiter;
+    // any connection beyond this is closed by the framework.
+    app.setMaxConnectionNum(10000);
 
-    if (use_tls) {
-        up_tcp_server->enableSSL(cert_path, key_path);
+    if (handler) {
+        app.setDefaultHandler(
+            [handler = std::move(handler)](
+                const drogon::HttpRequestPtr& req,
+                std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+                handler(req, std::move(callback));
+            });
     }
 
-    // Set connection callback
-    up_tcp_server->setConnectionCallback([this](const trantor::TcpConnectionPtr& p_conn) {
-        this->onConnection(p_conn);
-    });
+    // Drogon's event loop runs on this thread; run() returns after quit().
+    m_loop_thread = std::thread([]() { drogon::app().run(); });
 
-    // Set message callback — use custom HTTP parser instead of llhttp
-    up_tcp_server->setRecvMessageCallback(
-        [this, use_tls, handler = std::move(handler)](const trantor::TcpConnectionPtr& p_conn, trantor::MsgBuffer* p_msg) {
-            if (use_tls) {
-                // Only parse data once TLS is active on this connection.
-                // Trantor delivers only decrypted data to this callback once
-                // its TLS provider exists; without an SSL-enabled Trantor
-                // build there is no provider, so drop the data.
-                if (!p_conn->isSSLConnection()) {
-                    return; // SSL handshake not finished
-                }
-            }
-
-            zane::http::Parser parser;
-
-            const char* p_data = p_msg->peek();
-            size_t len = p_msg->readableBytes();
-
-            int32_t err = parser.execute(p_data, len);
-            if (err != 0 || parser.hasError()) {
-                LOG_ERROR << "HTTP parse error: " << parser.errorMessage();
-                p_conn->send("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
-                return;
-            }
-
-            if (!parser.isComplete()) return; // Need more data
-
-            // Get parsed request
-            zane::http::Request& parsed = parser.result();
-
-            // Create Zane builtin Request and Response (heap-allocated; ownership
-            // is transferred to their V8 wrappers inside the handler, which free
-            // them via a weak callback on GC).
-            auto* p_req = new Request(
-                std::move(parsed.m_method),
-                std::move(parsed.m_url),
-                std::move(parsed.m_headers),
-                std::move(parsed.m_body)
-            );
-
-            // Issue #14: the response callback used to call p_conn->send()
-            // directly from the V8 thread that runs the JS fetch handler.
-            // Trantor's TcpConnection requires its owning loop thread to be
-            // the only writer; calling send() from another thread is a
-            // data race (the write buffer and the lifecycle are both
-            // touched without synchronization). The fix is to capture the
-            // connection as a shared_ptr and dispatch each send through the
-            // connection's event loop, which is the only thread that
-            // should touch the buffer.
-            auto p_conn_sp = p_conn;  // shared_ptr<TcpConnection> is already shared
-            auto* p_loop_for_res = p_conn->getLoop();
-
-            // One-shot send callback (legacy). Used when the app calls
-            // res.send(body) directly — we build a complete HTTP response
-            // (with Content-Length) and hand it off in a single write.
-            auto send_cb = [p_conn_sp, p_loop_for_res](
-                              int32_t status, const std::map<std::string, std::string>& headers,
-                              const std::vector<uint8_t>& body) {
-                std::string http_resp = zane::http::buildResponse(
-                    status, "OK", headers, body.data(), body.size());
-                if (!p_conn_sp->connected()) return;
-                // Capture the data by value so the lambda owns the
-                // response bytes; the raw pointer into http_resp is
-                // stable until the lambda returns.
-                std::string resp_copy = std::move(http_resp);
-                p_loop_for_res->runInLoop(
-                    [p_conn_sp, resp_copy = std::move(resp_copy)]() {
-                        if (p_conn_sp->connected()) {
-                            p_conn_sp->send(resp_copy.data(), resp_copy.size());
-                        }
-                    });
-            };
-
-            // Streaming writeHead callback. Flushes status line + headers
-            // (with chunked framing by default) immediately, then the
-            // response stays open for writeChunk / endChunked calls.
-            auto write_head_cb = [p_conn_sp, p_loop_for_res](
-                                     int32_t status,
-                                     const std::map<std::string, std::string>& headers) {
-                if (!p_conn_sp->connected()) return;
-                std::string head = zane::http::buildResponseHead(status, "OK", headers);
-                p_loop_for_res->runInLoop(
-                    [p_conn_sp, head = std::move(head)]() {
-                        if (p_conn_sp->connected()) {
-                            p_conn_sp->send(head.data(), head.size());
-                        }
-                    });
-            };
-
-            // Streaming writeChunk callback. Frames the bytes as a single
-            // chunked-encoding frame (<hex-size>\r\n<data>\r\n) and writes
-            // it. Empty chunks are rejected by buildChunk() and become no-ops.
-            auto write_chunk_cb = [p_conn_sp, p_loop_for_res](
-                                      const std::vector<uint8_t>& chunk) {
-                if (chunk.empty()) return;
-                if (!p_conn_sp->connected()) return;
-                std::string framed = zane::http::buildChunk(chunk.data(), chunk.size());
-                if (framed.empty()) return;
-                p_loop_for_res->runInLoop(
-                    [p_conn_sp, framed = std::move(framed)]() {
-                        if (p_conn_sp->connected()) {
-                            p_conn_sp->send(framed.data(), framed.size());
-                        }
-                    });
-            };
-
-            // Streaming end callback. Emits the chunked terminator
-            // "0\r\n\r\n" so the client knows the body is complete.
-            auto end_chunked_cb = [p_conn_sp, p_loop_for_res]() {
-                if (!p_conn_sp->connected()) return;
-                std::string term = zane::http::buildChunkEnd();
-                p_loop_for_res->runInLoop(
-                    [p_conn_sp, term = std::move(term)]() {
-                        if (p_conn_sp->connected()) {
-                            p_conn_sp->send(term.data(), term.size());
-                        }
-                    });
-            };
-
-            auto* p_res = new Response(
-                std::move(send_cb),
-                std::move(write_head_cb),
-                std::move(write_chunk_cb),
-                std::move(end_chunked_cb)
-            );
-
-            if (handler) {
-                handler(p_req, p_res);
-            }
-        });
-
-    up_tcp_server->start();
     m_active_server_count++;
     m_running = true;
 
@@ -271,20 +123,12 @@ void Server::stop(std::function<void()> on_stop) {
 
     m_on_stop = std::move(on_stop);
 
-    // Stop server and quit loop on the event loop thread
-    if (up_tcp_server) {
-        trantor::EventLoop* p_loop = up_tcp_server->getLoop();
-        if (p_loop) {
-            p_loop->runInLoop([this, p_loop]() {
-                up_tcp_server->stop();
-                p_loop->quit();
-            });
-        }
-    }
+    // Signal all Drogon event loops to stop.
+    drogon::app().quit();
 
-    // Wait for event loop thread to exit
-    if (up_loop_thread) {
-        up_loop_thread->wait();
+    // Wait for the loop thread to exit.
+    if (m_loop_thread.joinable()) {
+        m_loop_thread.join();
     }
 
     m_active_server_count--;
@@ -297,28 +141,6 @@ void Server::stop(std::function<void()> on_stop) {
 
 auto Server::hasActiveServers() -> bool {
     return m_active_server_count.load() > 0;
-}
-
-void Server::onConnection(const std::shared_ptr<trantor::TcpConnection>& p_conn) {
-    if (p_conn->connected()) {
-        // Issue #9: enforce the connection cap. If we've already reached
-        // kMaxConnections, drop the new one immediately rather than
-        // adding to the FD set / memory.
-        if (g_active_connections.load() >= kMaxConnections) {
-            LOG_WARN << "Rejecting connection: at cap (" << kMaxConnections << ")";
-            p_conn->forceClose();
-            return;
-        }
-        g_active_connections.fetch_add(1);
-        LOG_INFO << "New connection (" << g_active_connections.load() << " active)";
-    } else {
-        // Decrement after the connection fully closes. forceClose() and
-        // the loop thread both go through this path.
-        if (g_active_connections.load() > 0) {
-            g_active_connections.fetch_sub(1);
-        }
-        LOG_INFO << "Connection closed";
-    }
 }
 
 // ============================================================================
@@ -410,93 +232,170 @@ void Server::serveCallback(const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto p_context_global = std::make_shared<v8::Global<v8::Context>>(p_isolate, context);
 
     // Create request handler that calls JS fetch.
-    // p_req/p_res are heap-allocated and NOT owned here: ownership transfers to
-    // the V8 wrapper objects (Request::wrap / Response::wrap), which free them
-    // via a weak callback on GC. This keeps them alive for as long as JS can
-    // reach them — including the async case where fetch() returns a Promise.
+    //
+    // The Drogon handler runs on a Drogon event-loop thread, which is NOT the
+    // V8 main thread. All V8-interacting work (fetch invocation, promise
+    // handling, Response finalization, timer creation from JS) must run on the
+    // main thread, otherwise V8 isolate access and the timer/task machinery
+    // race and crash. So this handler only:
+    //   1. copies the request data into a heap Dispatch struct, and
+    //   2. enqueues a Task for the main thread, which runs the fetch handler.
+    //
+    // The Drogon response callback (cb) is stored inside Dispatch. The main
+    // thread moves it into the Response completer; Response::finalize() calls
+    // it exactly once — from the main thread — and Drogon dispatches the
+    // actual socket write on the connection's event-loop thread
+    // (queueInLoop), so it is safe.
+    struct Dispatch {
+        std::string m_method;
+        std::string m_url;
+        std::map<std::string, std::string> m_headers;
+        std::vector<uint8_t> m_body;
+        std::function<void(drogon::HttpResponsePtr)> m_cb;
+    };
+
     RequestHandler handler = [p_isolate, p_context_global, p_fetch_global, p_error_global](
-                                 Request* p_req, Response* p_res) {
-        v8::Locker locker(p_isolate);
-        v8::Isolate::Scope isolate_scope(p_isolate);
-        v8::HandleScope handle_scope(p_isolate);
-        v8::Local<v8::Context> context = p_context_global->Get(p_isolate);
-        v8::Context::Scope context_scope(context);
-
-        // Wrap into V8 objects. This transfers C++ ownership to V8 (weak-callback
-        // cleanup), so the objects survive this lambda returning — even if the
-        // JS fetch handler returns a pending Promise that resolves later.
-        v8::Local<v8::Object> req_obj = p_req->wrap(p_isolate, context);
-        v8::Local<v8::Object> res_obj = p_res->wrap(p_isolate, context);
-
-        v8::Local<v8::Value> argv[2] = {req_obj, res_obj};
-        v8::Local<v8::Function> fetch_local = p_fetch_global->Get(p_isolate);
-        v8::TryCatch try_catch(p_isolate);
-
-        auto result = fetch_local->Call(context, context->Global(), 2, argv);
-
-        if (try_catch.HasCaught()) {
-            if (p_error_global) {
-                v8::Local<v8::Function> error_local = p_error_global->Get(p_isolate);
-                v8::Local<v8::Value> err_argv[1] = {try_catch.Exception()};
-                (void)error_local->Call(context, context->Global(), 1, err_argv);
+                                 const drogon::HttpRequestPtr& req,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+        // Header names are lowercased to match the pre-Drogon parser's
+        // behavior (the app-facing lookup in Request uses lowercase keys).
+        std::map<std::string, std::string> headers;
+        for (const auto& [k, v] : req->getHeaders()) {
+            std::string lk = k;
+            for (auto& c : lk) {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             }
-            if (!p_res->hasEnded()) {
-                p_res->send("Internal Server Error");
-            }
-            return;
+            headers[std::move(lk)] = std::string(v);
         }
 
-        // Handle Promise return from fetch.
-        if (result.IsEmpty()) return;
-        v8::Local<v8::Value> ret = result.ToLocalChecked();
-        if (ret->IsUndefined() || !ret->IsPromise()) return;
+        std::string url = req->getOriginalPath();
+        if (!req->query().empty()) {
+            url.push_back('?');
+            url += req->query();
+        }
+        std::string_view body_sv = req->body();
+        std::vector<uint8_t> body(body_sv.begin(), body_sv.end());
 
-        v8::Local<v8::Promise> promise = ret.As<v8::Promise>();
-        const auto send_error = [&](v8::Local<v8::Value> err) {
-            if (p_error_global) {
-                v8::Local<v8::Function> error_local = p_error_global->Get(p_isolate);
-                v8::Local<v8::Value> err_argv[1] = {err};
-                (void)error_local->Call(context, context->Global(), 1, err_argv);
+        auto* p_dispatch = new Dispatch{
+            drogon::to_string(req->method()),
+            std::move(url),
+            std::move(headers),
+            std::move(body),
+            std::move(cb),
+        };
+
+        auto* p_task = new zane::Task();
+        p_task->m_is_promise = false;
+        p_task->m_error_code = 0;
+
+        // Runs on the V8 main thread (TaskQueue::wait wakeup). The isolate is
+        // already owned by the main thread here, so no v8::Locker is needed.
+        p_task->m_runner = [p_isolate, p_context_global, p_fetch_global, p_error_global, p_dispatch](
+                               v8::Isolate* p_iso, v8::Local<v8::Context> /*ctx*/, zane::Task* /*task*/) {
+            v8::HandleScope handle_scope(p_iso);
+            v8::Local<v8::Context> context = p_context_global->Get(p_iso);
+            v8::Context::Scope context_scope(context);
+
+            // p_req/p_res are heap-allocated and NOT owned here: ownership
+            // transfers to the V8 wrapper objects (Request::wrap /
+            // Response::wrap), which free them via a weak callback on GC.
+            // This keeps them alive for as long as JS can reach them —
+            // including the async case where fetch() returns a Promise or the
+            // app responds later via setTimeout() etc.
+            auto* p_req = new Request(
+                std::move(p_dispatch->m_method),
+                std::move(p_dispatch->m_url),
+                std::move(p_dispatch->m_headers),
+                std::move(p_dispatch->m_body));
+
+            auto* p_res = new Response(
+                [cb = std::move(p_dispatch->m_cb)](drogon::HttpResponsePtr resp) { cb(std::move(resp)); });
+
+            delete p_dispatch;
+
+            v8::Local<v8::Object> req_obj = p_req->wrap(p_iso, context);
+            v8::Local<v8::Object> res_obj = p_res->wrap(p_iso, context);
+
+            v8::Local<v8::Value> argv[2] = {req_obj, res_obj};
+            v8::Local<v8::Function> fetch_local = p_fetch_global->Get(p_iso);
+            v8::TryCatch try_catch(p_iso);
+
+            auto result = fetch_local->Call(context, context->Global(), 2, argv);
+
+            if (try_catch.HasCaught()) {
+                if (p_error_global) {
+                    v8::Local<v8::Function> error_local = p_error_global->Get(p_iso);
+                    v8::Local<v8::Value> err_argv[1] = {try_catch.Exception()};
+                    (void)error_local->Call(context, context->Global(), 1, err_argv);
+                }
+                if (!p_res->hasEnded()) {
+                    p_res->send("Internal Server Error");
+                }
+                return;
             }
-            if (!p_res->hasEnded()) {
-                p_res->send("Internal Server Error");
+
+            // A handler that returns without ending the response leaves it
+            // pending: Drogon keeps the connection open until the response
+            // callback fires, which supports apps that respond asynchronously
+            // via setTimeout()/setImmediate() etc. The Response weak callback
+            // force-ends an abandoned response; no sync end() is issued here.
+            if (result.IsEmpty()) {
+                return;
+            }
+            v8::Local<v8::Value> ret = result.ToLocalChecked();
+            if (!ret->IsPromise()) {
+                return;
+            }
+
+            v8::Local<v8::Promise> promise = ret.As<v8::Promise>();
+            const auto send_error = [&](v8::Local<v8::Value> err) {
+                if (p_error_global) {
+                    v8::Local<v8::Function> error_local = p_error_global->Get(p_iso);
+                    v8::Local<v8::Value> err_argv[1] = {err};
+                    (void)error_local->Call(context, context->Global(), 1, err_argv);
+                }
+                if (!p_res->hasEnded()) {
+                    p_res->send("Internal Server Error");
+                }
+            };
+
+            switch (promise->State()) {
+                case v8::Promise::kFulfilled:
+                    // Resolved synchronously: app already sent the response itself.
+                    if (!p_res->hasEnded()) p_res->end();
+                    break;
+                case v8::Promise::kRejected:
+                    send_error(promise->Result());
+                    break;
+                case v8::Promise::kPending:
+                    // Async handler: keep res/req alive until the promise settles by
+                    // holding strong references to the wrappers. On resolve, end the
+                    // response if the app forgot; on reject, surface the error.
+                    promise->MarkAsHandled();
+                    {
+                        auto* p_state = new PromiseState{
+                            /*p_req_wrap=*/     new v8::Global<v8::Object>(p_iso, req_obj),
+                            /*p_res_wrap=*/     new v8::Global<v8::Object>(p_iso, res_obj),
+                            /*p_promise_wrap=*/ new v8::Global<v8::Promise>(p_iso, promise),
+                            /*p_res=*/          p_res,
+                            /*p_error_global=*/ p_error_global,
+                        };
+
+                        v8::Local<v8::External> data = v8::External::New(p_iso, p_state);
+                        v8::Local<v8::Function> on_fulfilled =
+                            v8::FunctionTemplate::New(p_iso, onPromiseFulfilled, data)
+                                ->GetFunction(context).ToLocalChecked();
+                        v8::Local<v8::Function> on_rejected =
+                            v8::FunctionTemplate::New(p_iso, onPromiseRejected, data)
+                                ->GetFunction(context).ToLocalChecked();
+
+                        promise->Then(context, on_fulfilled, on_rejected).IsEmpty();
+                    }
+                    break;
             }
         };
 
-        switch (promise->State()) {
-            case v8::Promise::kFulfilled:
-                // Resolved synchronously: app already sent the response itself.
-                if (!p_res->hasEnded()) p_res->end();
-                break;
-            case v8::Promise::kRejected:
-                send_error(promise->Result());
-                break;
-            case v8::Promise::kPending:
-                // Async handler: keep res/req alive until the promise settles by
-                // holding strong references to the wrappers. On resolve, end the
-                // response if the app forgot; on reject, surface the error.
-                promise->MarkAsHandled();
-                {
-                    auto* p_state = new PromiseState{
-                        /*p_req_wrap=*/     new v8::Global<v8::Object>(p_isolate, req_obj),
-                        /*p_res_wrap=*/     new v8::Global<v8::Object>(p_isolate, res_obj),
-                        /*p_promise_wrap=*/ new v8::Global<v8::Promise>(p_isolate, promise),
-                        /*p_res=*/          p_res,
-                        /*p_error_global=*/ p_error_global,
-                    };
-
-                    v8::Local<v8::External> data = v8::External::New(p_isolate, p_state);
-                    v8::Local<v8::Function> on_fulfilled =
-                        v8::FunctionTemplate::New(p_isolate, onPromiseFulfilled, data)
-                            ->GetFunction(context).ToLocalChecked();
-                    v8::Local<v8::Function> on_rejected =
-                        v8::FunctionTemplate::New(p_isolate, onPromiseRejected, data)
-                            ->GetFunction(context).ToLocalChecked();
-
-                    promise->Then(context, on_fulfilled, on_rejected).IsEmpty();
-                }
-                break;
-        }
+        zane::TaskQueue::getInstance().enqueue(p_task);
     };
 
     // Start server

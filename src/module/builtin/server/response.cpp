@@ -1,5 +1,4 @@
 #include "response.hpp"
-#include <http_parser.hpp>
 
 namespace zane {
 namespace builtin {
@@ -19,25 +18,16 @@ bool containsHeaderInjection(const std::string& s) {
 // Construction
 // ============================================================================
 
-Response::Response(SendCallback send_cb) : m_send_cb(std::move(send_cb)) {}
-
-Response::Response(SendCallback send_cb,
-                   WriteHeadCallback write_head_cb,
-                   WriteChunkCallback write_chunk_cb,
-                   EndChunkedCallback end_chunked_cb)
-    : m_send_cb(std::move(send_cb)),
-      m_write_head_cb(std::move(write_head_cb)),
-      m_write_chunk_cb(std::move(write_chunk_cb)),
-      m_end_chunked_cb(std::move(end_chunked_cb)) {}
+Response::Response(ResponseCompleter completer) : m_completer(std::move(completer)) {}
 
 // ============================================================================
 // Header / status helpers
 // ============================================================================
 
 void Response::setHeader(const std::string& name, const std::string& value) {
-    // Defense-in-depth: the serializer (buildResponse) also strips CRLF, but
-    // reject early at the application-facing API so the caller gets a clear
-    // error instead of a silently mangled response.
+    // Defense-in-depth: finalize() also skips bad entries, but reject early at
+    // the application-facing API so the caller gets a clear error instead of
+    // a silently mangled response.
     if (name.empty() || containsHeaderInjection(name) || containsHeaderInjection(value)) {
         return; // JS-facing setHeader() throws instead; internal callers ignore.
     }
@@ -45,61 +35,54 @@ void Response::setHeader(const std::string& name, const std::string& value) {
 }
 
 // ============================================================================
-// Internal: flush the response head when the first body byte is about to go
-// out, so the application can mix legacy one-shot send() with new streaming
-// write() / writeHead() without having to know which mode is in use.
+// Response finalization
 // ============================================================================
 
-void Response::flushHeadIfNeeded() {
-    if (m_head_sent) return;
+void Response::finalize() {
     if (m_has_ended) return;
-    if (!m_write_head_cb) {
-        // Streaming callbacks weren't wired up — fall back to the legacy
-        // one-shot path by sending everything inline. This keeps any
-        // external embedder that constructs a Response with just the
-        // SendCallback (e.g. tests) source-compatible.
-        return;
-    }
-    // Streaming mode forces Transfer-Encoding: chunked framing. Apps that
-    // want Content-Length should NOT use write()/writeHead() and instead
-    // use send() with a known-size body.
-    m_write_head_cb(m_status, m_headers);
+    m_has_ended = true;
     m_head_sent = true;
+
+    drogon::HttpResponsePtr resp = drogon::HttpResponse::newHttpResponse();
+
+    // Preserve arbitrary app status codes; Drogon fills in the standard
+    // reason phrase (fixes the pre-Drogon "404 OK" behavior).
+    resp->setCustomStatusCode(m_status);
+
+    // Apply the collected headers. No Content-Length / Connection handling is
+    // done here — Drogon computes framing (Content-Length or chunked) and
+    // keep-alive itself.
+    bool has_xcto = false;
+    for (const auto& [name, value] : m_headers) {
+        if (name.empty() || containsHeaderInjection(name) || containsHeaderInjection(value)) {
+            continue;
+        }
+        resp->addHeader(name, value);
+        if (name == "X-Content-Type-Options") has_xcto = true;
+    }
+    if (!has_xcto) {
+        resp->addHeader("X-Content-Type-Options", "nosniff");
+    }
+    if (!m_body.empty()) {
+        resp->setBody(std::move(m_body));
+    }
+
+    // Hand the response to Drogon. May be invoked from the V8 thread after an
+    // async Promise settles; Drogon dispatches the write on the connection's
+    // event-loop thread (queueInLoop), so this is thread-safe.
+    if (m_completer) {
+        m_completer(std::move(resp));
+    }
 }
 
 // ============================================================================
-// One-shot API (legacy)
+// One-shot API (send / end)
 // ============================================================================
 
 void Response::send(const std::string& body) {
     if (m_has_ended) return;
-
-    // Streaming path: the response has been put into streaming mode by a
-    // prior writeHead() or write() call, so we cannot use Content-Length
-    // (we don't know the total size yet). Flush head if needed, write the
-    // body as one chunk, and terminate.
-    if (m_streaming && m_write_chunk_cb && m_end_chunked_cb) {
-        flushHeadIfNeeded();
-        if (!body.empty()) {
-            std::vector<uint8_t> chunk(body.begin(), body.end());
-            m_write_chunk_cb(chunk);
-        }
-        m_end_chunked_cb();
-        m_has_ended = true;
-        return;
-    }
-
-    // Legacy non-streaming path (Content-Length framed). This is the
-    // original behavior pre-streaming and is kept identical for backward
-    // compatibility — every existing test that uses res.send() must
-    // continue to produce a Content-Length response.
-    std::vector<uint8_t> body_bytes(body.begin(), body.end());
-    if (m_send_cb) {
-        m_send_cb(m_status, m_headers, body_bytes);
-    }
-
-    m_has_ended = true;
-    m_head_sent = true;
+    m_body = body;
+    finalize();
 }
 
 void Response::sendJson(v8::Isolate* p_isolate, v8::Local<v8::Value> obj) {
@@ -118,21 +101,11 @@ void Response::sendJson(v8::Isolate* p_isolate, v8::Local<v8::Value> obj) {
 
 void Response::end() {
     if (m_has_ended) return;
-
-    // Streaming path: flush head if needed and emit the chunked terminator.
-    if (m_streaming && m_write_chunk_cb && m_end_chunked_cb) {
-        flushHeadIfNeeded();
-        m_end_chunked_cb();
-        m_has_ended = true;
-        return;
-    }
-
-    // Legacy path: send an empty body so Content-Length: 0 is emitted.
-    send("");
+    finalize();
 }
 
 // ============================================================================
-// Streaming API
+// Streaming API (buffered)
 // ============================================================================
 
 void Response::writeHead(int32_t status, const std::map<std::string, std::string>& headers) {
@@ -140,7 +113,7 @@ void Response::writeHead(int32_t status, const std::map<std::string, std::string
     if (m_head_sent) {
         // Head already flushed. The JS-facing writeHeadMethod() wrapper
         // detects this state and throws a JS error; from pure C++ callers
-        // we silently no-op (matches the legacy send() / end() pattern).
+        // we silently no-op.
         return;
     }
 
@@ -155,35 +128,19 @@ void Response::writeHead(int32_t status, const std::map<std::string, std::string
     }
     m_status = status;
     m_write_head_called = true;
-    m_streaming = true;
-
-    if (m_write_head_cb) {
-        m_write_head_cb(m_status, m_headers);
-        m_head_sent = true;
-    }
+    m_head_sent = true;
 }
 
 void Response::write(const std::vector<uint8_t>& chunk) {
     if (m_has_ended) return;
-    if (chunk.empty()) return; // empty mid-stream is a no-op; terminator goes through end().
-
-    if (!m_write_chunk_cb) {
-        // Streaming wasn't wired up; fall back to one-shot semantics.
-        std::string body(reinterpret_cast<const char*>(chunk.data()), chunk.size());
-        send(body);
-        return;
-    }
-
-    m_streaming = true;
-    flushHeadIfNeeded();
-    m_write_chunk_cb(chunk);
+    if (chunk.empty()) return; // empty mid-stream is a no-op.
+    m_body.append(reinterpret_cast<const char*>(chunk.data()), chunk.size());
 }
 
 void Response::write(const std::string& chunk) {
     if (m_has_ended) return;
     if (chunk.empty()) return;
-    std::vector<uint8_t> bytes(chunk.begin(), chunk.end());
-    write(bytes);
+    m_body += chunk;
 }
 
 // ============================================================================
@@ -217,7 +174,7 @@ v8::Local<v8::ObjectTemplate> Response::createTemplate(v8::Isolate* p_isolate) {
              v8::FunctionTemplate::New(p_isolate, endMethod));
     tpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "setHeader"),
              v8::FunctionTemplate::New(p_isolate, setHeaderMethod));
-    // Streaming methods
+    // Streaming methods (buffered until end())
     tpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "writeHead"),
              v8::FunctionTemplate::New(p_isolate, writeHeadMethod));
     tpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "write"),
@@ -246,8 +203,8 @@ v8::Local<v8::Object> Response::wrap(v8::Isolate* p_isolate, v8::Local<v8::Conte
 void Response::weakCallback(const v8::WeakCallbackInfo<Response>& data) {
     Response* p_res = data.GetParameter();
     // Safety net: an async fetch handler may drop the response object before it
-    // has ended. Force-end it (empty body) so the underlying TCP reply is still
-    // flushed and the connection is released, then free the memory.
+    // has ended. Force-end it (empty body) so the underlying HTTP reply is
+    // still flushed and the connection is released, then free the memory.
     if (!p_res->m_has_ended) {
         p_res->send("");
     }
@@ -314,11 +271,15 @@ void Response::sendMethod(const v8::FunctionCallbackInfo<v8::Value>& args) {
     }
 }
 
-void Response::jsonMethod(const v8::FunctionCallbackInfo<v8::Value>& args) {
+void Response::sendJsonMethod(const v8::FunctionCallbackInfo<v8::Value>& args) {
     Response* p_res = unwrap(args.This());
     if (!p_res || p_res->m_has_ended || args.Length() < 1) return;
 
     p_res->sendJson(args.GetIsolate(), args[0]);
+}
+
+void Response::jsonMethod(const v8::FunctionCallbackInfo<v8::Value>& args) {
+    sendJsonMethod(args);
 }
 
 void Response::statusMethod(const v8::FunctionCallbackInfo<v8::Value>& args) {

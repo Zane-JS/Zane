@@ -21,9 +21,8 @@ Zane embraces V8 as its foundation, not as an implementation detail. Rather than
 - **Pure C++23** — zero overhead, built with the latest MSVC toolchain
 - **Monolithic build** — single `zane.exe`, no DLL dependencies
 - **Builtin HTTP server** — `Zane.serve({ fetch, port })` with hand-written HTTP/1.1 parser
-- **Custom HTTP parser** (libs/http) — no llhttp, no code generation, pure C++ state machine
 - **Temporal enabled** — ready for next-generation JS date/time APIs
-- **Trantor networking** — async I/O via epoll/IOCP-based event loop
+- **Drogon networking** — The network framework Zane uses
 - **Node.js behavioral compatibility** — `node:*` modules (fs, path, os, buffer, events, stream, zlib, process) with matching API surface, not source fork
 - **Zane Context** — optimized default environment with essential APIs (`console`, `Zane.*`)
 

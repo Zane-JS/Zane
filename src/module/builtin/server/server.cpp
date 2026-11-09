@@ -302,19 +302,32 @@ void Server::serveCallback(const v8::FunctionCallbackInfo<v8::Value>& args) {
             // This keeps them alive for as long as JS can reach them —
             // including the async case where fetch() returns a Promise or the
             // app responds later via setTimeout() etc.
-            auto* p_req = new Request(
-                std::move(p_dispatch->m_method),
-                std::move(p_dispatch->m_url),
-                std::move(p_dispatch->m_headers),
-                std::move(p_dispatch->m_body));
-
-            auto* p_res = new Response(
-                [cb = std::move(p_dispatch->m_cb)](drogon::HttpResponsePtr resp) { cb(std::move(resp)); });
-
+            std::string method = std::move(p_dispatch->m_method);
+            std::string url = std::move(p_dispatch->m_url);
+            std::map<std::string, std::string> headers = std::move(p_dispatch->m_headers);
+            std::vector<uint8_t> body = std::move(p_dispatch->m_body);
+            auto cb = std::move(p_dispatch->m_cb);
             delete p_dispatch;
+            p_dispatch = nullptr;
+
+            std::unique_ptr<Request> up_req = std::make_unique<Request>(
+                std::move(method),
+                std::move(url),
+                std::move(headers),
+                std::move(body));
+
+            std::unique_ptr<Response> up_res = std::make_unique<Response>(
+                [cb = std::move(cb)](drogon::HttpResponsePtr resp) { cb(std::move(resp)); });
+
+            Request* p_req = up_req.get();
+            Response* p_res = up_res.get();
 
             v8::Local<v8::Object> req_obj = p_req->wrap(p_iso, context);
             v8::Local<v8::Object> res_obj = p_res->wrap(p_iso, context);
+
+            // Ownership transferred to V8 weak callbacks
+            up_req.release();
+            up_res.release();
 
             v8::Local<v8::Value> argv[2] = {req_obj, res_obj};
             v8::Local<v8::Function> fetch_local = p_fetch_global->Get(p_iso);

@@ -65,6 +65,12 @@ namespace zane {
 
 class Runtime {
   public:
+    /**
+     * Initializes V8, including ICU and the default platform. Applies the
+     * built-in V8 flags first, followed by the space-separated flags in
+     * ZANE_V8_FLAGS if it is set.
+     * @param exec_path Executable path passed to V8 to locate ICU data.
+     */
     static void Initialize(const char* exec_path) {
         // Clean high-performance V8 flags
         // NOTE: --no-additive-safe-int-feedback keeps V8 14.x's experimental

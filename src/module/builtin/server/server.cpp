@@ -565,6 +565,15 @@ void Server::serveCallback(const v8::FunctionCallbackInfo<v8::Value>& args) {
             auto* p_srv = static_cast<Server*>(args.Data().As<v8::External>()->Value());
             if (p_srv && !p_srv->isStopped()) {
                 p_srv->stop();
+                // Tear down the weak reference before deleting: otherwise the
+                // weak callback would later fire on freed memory. ClearWeak()
+                // turns the handle strong again, so it is safe to reset+free.
+                if (p_srv->m_self_owner) {
+                    p_srv->m_self.ClearWeak();
+                    p_srv->m_self.Reset();
+                    delete p_srv->m_self_owner;
+                    p_srv->m_self_owner = nullptr;
+                }
                 delete p_srv;
             }
         },
@@ -577,17 +586,37 @@ void Server::serveCallback(const v8::FunctionCallbackInfo<v8::Value>& args) {
     v8::Local<v8::Object> server_obj = server_tpl->NewInstance(context).ToLocalChecked();
 
     // Schedule a weak callback on the returned object. When the JS GC
-    // collects it: stop the server if still running, then delete.
-    // Use a v8::Global so the callback fires exactly once; after
-    // V8 calls the callback the global is cleared automatically.
+    // collects the wrapper: stop the server if still running, then delete the
+    // C++ object.
+    //
+    // V8 requires a weak callback to reset the handle it fired for; leaving it
+    // set trips "Handle not reset in first callback" on a later GC. The Global
+    // is owned by the callback (it cannot live on the Server, which is deleted
+    // here) and is freed after the reset.
     auto* p_server_global = new v8::Global<v8::Object>(p_isolate, server_obj);
-    p_server_global->SetWeak(p_server, [](const v8::WeakCallbackInfo<Server>& data) {
-        Server* p_srv = data.GetParameter();
-        if (p_srv && !p_srv->isStopped()) {
-            p_srv->stop();
+    p_server_global->SetWeak(p_server,
+        [](const v8::WeakCallbackInfo<Server>& data) {
+            Server* p_srv = data.GetParameter();
+            if (!p_srv) return;
+            if (!p_srv->isStopped()) {
+                p_srv->stop();
+            }
+            // Reset the handle V8 just fired, then release the Global object.
+            // m_self is a *different* Global from m_self_owner: the wrapper is
+            // referenced once here (for the callback) and once by the Server.
+            v8::Global<v8::Object>* p_owner = p_srv->m_self_owner;
+            p_srv->m_self_owner = nullptr;
+            p_srv->m_self.Reset();
+            if (p_owner) {
+                p_owner->Reset();
+                delete p_owner;
+            }
             delete p_srv;
-        }
-    }, v8::WeakCallbackType::kParameter);
+        }, v8::WeakCallbackType::kParameter);
+    // Keep the callback's handle reachable (m_self_owner) and give the Server
+    // its own handle to the wrapper for m_self.
+    p_server->m_self_owner = p_server_global;
+    p_server->m_self.Reset(p_isolate, server_obj);
 
     args.GetReturnValue().Set(server_obj);
 }

@@ -117,6 +117,14 @@ class Response {
 
     static v8::Persistent<v8::ObjectTemplate> m_template;
 
+    // Persistent handle to the JS wrapper.
+    //
+    // It must live on the object (not in a local inside wrap()): V8 requires a
+    // weak callback to reset the handle it fired for, and destroying the
+    // handle outside the callback trips
+    // "Handle not reset in first callback".
+    v8::Global<v8::Object> m_self;
+
     // JS property getters/setters
     static void getStatus(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
     static void setStatus(v8::Local<v8::Name> property, v8::Local<v8::Value> value,

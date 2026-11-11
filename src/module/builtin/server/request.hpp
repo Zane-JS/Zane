@@ -50,6 +50,10 @@ class Request {
     // Internal V8 template (cached)
     static v8::Persistent<v8::ObjectTemplate> m_template;
 
+    // Persistent handle to the JS wrapper. Must live on the object: V8 requires
+    // a weak callback to reset the handle it fired for.
+    v8::Global<v8::Object> m_self;
+
     // JS property getters
     static void getMethod(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
     static void getUrl(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);

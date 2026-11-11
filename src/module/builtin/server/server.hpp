@@ -58,12 +58,9 @@ class Server {
     // so we don't double-delete the Server.
     bool isStopped() const { return !m_running; }
 
-    // Handle to the JS wrapper returned by Zane.serve(). The weak callback must
-    // reset it, and m_self_owner keeps the Global object itself alive until the
-    // callback runs (freeing a Global before its callback would reset an
-    // already-freed slot).
+    // Persistent handle to the JS wrapper returned by Zane.serve().
+    // Made weak to allow GC cleanup if the user drops the JS reference without close().
     v8::Global<v8::Object> m_self;
-    v8::Global<v8::Object>* m_self_owner = nullptr;
 
   private:
     std::unique_ptr<trantor::TcpServer> up_tcp_server;

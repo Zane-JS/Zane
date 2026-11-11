@@ -631,6 +631,7 @@ class Runtime {
         }
 
         // Event Loop
+        zane::builtin::setMainThreadLoop(p_isolate, context);
         bool keep_running = true;
         while (keep_running) {
             // 1. Process Tasks from TaskQueue
@@ -653,7 +654,6 @@ class Runtime {
             // 2. Run callbacks posted by background threads (HTTP requests,
             //    socket events). They must run here — on the isolate-owning
             //    thread — never on the Trantor loop thread that received them.
-            zane::builtin::setMainThreadLoop(p_isolate, context);
             if (zane::builtin::pendingMainThreadTasks() > 0) {
                 zane::builtin::drainMainThreadTasks(p_isolate, context);
                 p_isolate->PerformMicrotaskCheckpoint();

@@ -351,6 +351,7 @@ set(ZANE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/module/node/events/events.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/module/node/stream/stream.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/module/builtin/builtin.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/module/builtin/main_thread_dispatch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/module/builtin/server/request.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/module/builtin/server/response.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/module/builtin/server/server.cpp

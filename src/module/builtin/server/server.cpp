@@ -1,6 +1,7 @@
 #include "server.hpp"
 #include "request.hpp"
 #include "response.hpp"
+#include "../main_thread_dispatch.hpp"
 
 #include <trantor/net/TcpServer.h>
 #include <trantor/net/EventLoop.h>
@@ -255,7 +256,36 @@ bool Server::start(
             );
 
             if (handler) {
-                handler(p_req, p_res);
+                // Issue: V8 main-thread safety. `handler` enters the isolate and
+                // calls the app's JS `fetch` function. This callback, however,
+                // runs on Trantor's event-loop thread — NOT on the thread that
+                // owns the isolate. Calling into V8 from here races with the
+                // main loop's timer/TaskQueue/microtask machinery (fetch() may
+                // call setTimeout(), fs, queueMicrotask...), which touches the
+                // same isolate state without synchronization: intermittent
+                // crashes and corrupted promise state.
+                //
+                // Fix: hand the request to the main thread and return. The JS
+                // fetch handler then runs where every other JS entry point
+                // runs, inside the loop's HandleScope/Context, between timer
+                // ticks. Writes are already loop-safe because every Response
+                // callback posts through p_conn->getLoop().
+                //
+                // `handler` is copied into the thunk so a request arriving
+                // after shutdown still owns a valid callable; the thunk is
+                // dropped by postToMainThread() when the loop is gone.
+                bool posted = zane::builtin::postToMainThread(
+                    [handler, p_req, p_res](v8::Isolate*, v8::Local<v8::Context>) {
+                        handler(p_req, p_res);
+                    });
+
+                if (!posted) {
+                    // Event loop already gone: free the C++ objects. They were
+                    // never handed to V8, so nothing else owns them.
+                    LOG_WARN << "Dropping request: main event loop is not running";
+                    delete p_req;
+                    delete p_res;
+                }
             }
         });
 
@@ -416,8 +446,12 @@ void Server::serveCallback(const v8::FunctionCallbackInfo<v8::Value>& args) {
     // reach them — including the async case where fetch() returns a Promise.
     RequestHandler handler = [p_isolate, p_context_global, p_fetch_global, p_error_global](
                                  Request* p_req, Response* p_res) {
-        v8::Locker locker(p_isolate);
-        v8::Isolate::Scope isolate_scope(p_isolate);
+        // NOTE: no v8::Locker / Isolate::Enter here. This handler is invoked
+        // from `zane::builtin::postToMainThread` on the event-loop thread, which
+        // already owns the isolate and entered a HandleScope + Context. Adding
+        // a Locker on the owning thread is legal but pointless, and made it
+        // ambiguous which thread was responsible for the isolate — see the
+        // dispatch comment in start().
         v8::HandleScope handle_scope(p_isolate);
         v8::Local<v8::Context> context = p_context_global->Get(p_isolate);
         v8::Context::Scope context_scope(context);

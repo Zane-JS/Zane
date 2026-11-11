@@ -1,6 +1,7 @@
 #include "server.hpp"
 #include "request.hpp"
 #include "response.hpp"
+#include "response_queue.hpp"
 #include "../main_thread_dispatch.hpp"
 
 #include <trantor/net/TcpServer.h>
@@ -124,14 +125,20 @@ bool Server::start(
         up_tcp_server->enableSSL(cert_path, key_path);
     }
 
+    // Accessed only on the server's connection loop. Response callbacks retain
+    // their queue independently until all posted writes have finished.
+    auto sp_response_queues = std::make_shared<
+        std::map<const trantor::TcpConnection*, std::shared_ptr<ResponseQueue>>>();
+
     // Set connection callback
-    up_tcp_server->setConnectionCallback([this](const trantor::TcpConnectionPtr& p_conn) {
+    up_tcp_server->setConnectionCallback([this, sp_response_queues](const trantor::TcpConnectionPtr& p_conn) {
         this->onConnection(p_conn);
+        if (!p_conn->connected()) sp_response_queues->erase(p_conn.get());
     });
 
     // Set message callback — use custom HTTP parser instead of llhttp
     up_tcp_server->setRecvMessageCallback(
-        [this, use_tls, handler = std::move(handler)](const trantor::TcpConnectionPtr& p_conn, trantor::MsgBuffer* p_msg) {
+        [this, use_tls, sp_response_queues, handler = std::move(handler)](const trantor::TcpConnectionPtr& p_conn, trantor::MsgBuffer* p_msg) {
             if (use_tls) {
                 // Only parse data once TLS is active on this connection.
                 // Trantor delivers only decrypted data to this callback once
@@ -181,71 +188,47 @@ bool Server::start(
             auto p_conn_sp = p_conn;  // shared_ptr<TcpConnection> is already shared
             auto* p_loop_for_res = p_conn->getLoop();
 
-            // One-shot send callback (legacy). Used when the app calls
-            // res.send(body) directly — we build a complete HTTP response
-            // (with Content-Length) and hand it off in a single write.
-            auto send_cb = [p_conn_sp, p_loop_for_res](
+            auto& sp_queue = (*sp_response_queues)[p_conn.get()];
+            if (!sp_queue) sp_queue = std::make_shared<ResponseQueue>();
+            auto sp_pending = sp_queue->enqueue();
+
+            // Both accepted responses and immediate rejections use the same
+            // request slot. Only the front response may write, including its
+            // streaming chunks; completion releases the next response.
+            auto write_response = [p_conn_sp, p_loop_for_res, sp_queue, sp_pending](
+                                      std::string bytes, bool complete) {
+                p_loop_for_res->runInLoop(
+                    [p_conn_sp, sp_queue, sp_pending,
+                     bytes = std::move(bytes), complete]() mutable {
+                        if (!p_conn_sp->connected()) return;
+                        sp_queue->write(sp_pending, std::move(bytes), complete,
+                            [p_conn_sp](const std::string& data) {
+                                p_conn_sp->send(data.data(), data.size());
+                            });
+                    });
+            };
+
+            auto send_cb = [write_response](
                               int32_t status, const std::map<std::string, std::string>& headers,
                               const std::vector<uint8_t>& body) {
-                std::string http_resp = zane::http::buildResponse(
-                    status, "OK", headers, body.data(), body.size());
-                if (!p_conn_sp->connected()) return;
-                // Capture the data by value so the lambda owns the
-                // response bytes; the raw pointer into http_resp is
-                // stable until the lambda returns.
-                std::string resp_copy = std::move(http_resp);
-                p_loop_for_res->runInLoop(
-                    [p_conn_sp, resp_copy = std::move(resp_copy)]() {
-                        if (p_conn_sp->connected()) {
-                            p_conn_sp->send(resp_copy.data(), resp_copy.size());
-                        }
-                    });
+                write_response(zane::http::buildResponse(
+                    status, "OK", headers, body.data(), body.size()), true);
             };
 
-            // Streaming writeHead callback. Flushes status line + headers
-            // (with chunked framing by default) immediately, then the
-            // response stays open for writeChunk / endChunked calls.
-            auto write_head_cb = [p_conn_sp, p_loop_for_res](
+            auto write_head_cb = [write_response](
                                      int32_t status,
                                      const std::map<std::string, std::string>& headers) {
-                if (!p_conn_sp->connected()) return;
-                std::string head = zane::http::buildResponseHead(status, "OK", headers);
-                p_loop_for_res->runInLoop(
-                    [p_conn_sp, head = std::move(head)]() {
-                        if (p_conn_sp->connected()) {
-                            p_conn_sp->send(head.data(), head.size());
-                        }
-                    });
+                write_response(zane::http::buildResponseHead(status, "OK", headers), false);
             };
 
-            // Streaming writeChunk callback. Frames the bytes as a single
-            // chunked-encoding frame (<hex-size>\r\n<data>\r\n) and writes
-            // it. Empty chunks are rejected by buildChunk() and become no-ops.
-            auto write_chunk_cb = [p_conn_sp, p_loop_for_res](
-                                      const std::vector<uint8_t>& chunk) {
+            auto write_chunk_cb = [write_response](const std::vector<uint8_t>& chunk) {
                 if (chunk.empty()) return;
-                if (!p_conn_sp->connected()) return;
                 std::string framed = zane::http::buildChunk(chunk.data(), chunk.size());
-                if (framed.empty()) return;
-                p_loop_for_res->runInLoop(
-                    [p_conn_sp, framed = std::move(framed)]() {
-                        if (p_conn_sp->connected()) {
-                            p_conn_sp->send(framed.data(), framed.size());
-                        }
-                    });
+                if (!framed.empty()) write_response(std::move(framed), false);
             };
 
-            // Streaming end callback. Emits the chunked terminator
-            // "0\r\n\r\n" so the client knows the body is complete.
-            auto end_chunked_cb = [p_conn_sp, p_loop_for_res]() {
-                if (!p_conn_sp->connected()) return;
-                std::string term = zane::http::buildChunkEnd();
-                p_loop_for_res->runInLoop(
-                    [p_conn_sp, term = std::move(term)]() {
-                        if (p_conn_sp->connected()) {
-                            p_conn_sp->send(term.data(), term.size());
-                        }
-                    });
+            auto end_chunked_cb = [write_response]() {
+                write_response(zane::http::buildChunkEnd(), true);
             };
 
             auto* p_res = new Response(

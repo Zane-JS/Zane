@@ -285,8 +285,13 @@ bool Server::start(
                     });
 
                 if (!posted) {
-                    // Event loop gone or queue overloaded: free immediately and send 503 if still open
+                    // Event loop gone or queue overloaded: send 503 Service Unavailable
                     LOG_WARN << "Dropping request: main event loop is not running or queue is full";
+                    if (p_res && !p_res->hasEnded()) {
+                        p_res->setStatus(503);
+                        p_res->setHeader("Connection", "close");
+                        p_res->send("Service Unavailable");
+                    }
                     // sp_req & sp_res will automatically delete p_req & p_res when leaving scope
                 }
             }

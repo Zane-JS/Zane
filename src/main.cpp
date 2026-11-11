@@ -592,6 +592,13 @@ class Runtime {
         v8::Local<v8::Context> context = m_context.Get(p_isolate);
         v8::Context::Scope context_scope(context);
 
+        zane::builtin::setMainThreadLoop(p_isolate, context);
+        struct MainLoopScopeGuard {
+            ~MainLoopScopeGuard() {
+                zane::builtin::setMainThreadLoop(nullptr, v8::Local<v8::Context>());
+            }
+        } loop_guard;
+
         v8::TryCatch try_catch(p_isolate);
 
         v8::Local<v8::String> v8_source = v8::String::NewFromUtf8(p_isolate, source.c_str()).ToLocalChecked();
@@ -650,7 +657,15 @@ class Runtime {
                 }
             }
 
-            // 2. Process Timers
+            // 2. Run callbacks posted by background threads (HTTP requests,
+            //    socket events). They must run here — on the isolate-owning
+            //    thread — never on the Trantor loop thread that received them.
+            if (zane::builtin::pendingMainThreadTasks() > 0) {
+                zane::builtin::drainMainThreadTasks(p_isolate, context);
+                p_isolate->PerformMicrotaskCheckpoint();
+            }
+
+            // 3. Process Timers
             if (zane::module::Timer::hasActiveTimers()) {
                 v8::TryCatch loop_try_catch(p_isolate);
                 zane::module::Timer::tick(p_isolate, context);
@@ -661,7 +676,7 @@ class Runtime {
                 }
             }
 
-            // 3. Final termination check (Timer, TaskQueue, ThreadPool, Builtin)
+            // 4. Final termination check (Timer, TaskQueue, ThreadPool, Builtin)
             bool has_work = zane::module::Timer::hasActiveTimers() ||
                             !zane::TaskQueue::getInstance().isEmpty() ||
                             zane::ThreadPool::getInstance().hasPendingTasks() ||
@@ -682,7 +697,7 @@ class Runtime {
                 }
             }
 
-            // 4. Wait for work if nothing is pending right now
+            // 5. Wait for work if nothing is pending right now
             if (keep_running && zane::TaskQueue::getInstance().isEmpty()) { 
                 std::chrono::milliseconds delay = zane::module::Timer::getNextDelay();
                 std::chrono::milliseconds timeout(10); 
@@ -695,6 +710,9 @@ class Runtime {
             }
         }
 
+        // The event loop has exited: the background HTTP server threads must
+        // stop posting V8 work into an isolate nobody is servicing any more.
+        // Handled automatically by loop_guard destructor on any exit path.
         return true;
     }
 

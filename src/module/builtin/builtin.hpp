@@ -3,6 +3,10 @@
 
 #include "v8.h"
 
+// Re-exported here so the runtime event loop can drive background-thread
+// callbacks without depending on the server module directly.
+#include "main_thread_dispatch.hpp"
+
 namespace zane {
 namespace builtin {
 

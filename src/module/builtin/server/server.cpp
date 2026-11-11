@@ -1,6 +1,8 @@
 #include "server.hpp"
 #include "request.hpp"
 #include "response.hpp"
+#include "response_queue.hpp"
+#include "../main_thread_dispatch.hpp"
 
 #include <trantor/net/TcpServer.h>
 #include <trantor/net/EventLoop.h>
@@ -123,14 +125,26 @@ bool Server::start(
         up_tcp_server->enableSSL(cert_path, key_path);
     }
 
+    // Accessed only on the server's connection loop. Response callbacks retain
+    // their queue independently until all posted writes have finished.
+    auto sp_response_queues = std::make_shared<
+        std::map<const trantor::TcpConnection*, std::shared_ptr<ResponseQueue>>>();
+
     // Set connection callback
-    up_tcp_server->setConnectionCallback([this](const trantor::TcpConnectionPtr& p_conn) {
+    up_tcp_server->setConnectionCallback([this, sp_response_queues](const trantor::TcpConnectionPtr& p_conn) {
         this->onConnection(p_conn);
+        if (!p_conn->connected()) {
+            auto it = sp_response_queues->find(p_conn.get());
+            if (it != sp_response_queues->end()) {
+                it->second->abort();
+                sp_response_queues->erase(it);
+            }
+        }
     });
 
     // Set message callback — use custom HTTP parser instead of llhttp
     up_tcp_server->setRecvMessageCallback(
-        [this, use_tls, handler = std::move(handler)](const trantor::TcpConnectionPtr& p_conn, trantor::MsgBuffer* p_msg) {
+        [this, use_tls, sp_response_queues, handler = std::move(handler)](const trantor::TcpConnectionPtr& p_conn, trantor::MsgBuffer* p_msg) {
             if (use_tls) {
                 // Only parse data once TLS is active on this connection.
                 // Trantor delivers only decrypted data to this callback once
@@ -140,6 +154,9 @@ bool Server::start(
                     return; // SSL handshake not finished
                 }
             }
+
+            auto it = sp_response_queues->find(p_conn.get());
+            if (it != sp_response_queues->end() && it->second->closing()) return;
 
             zane::http::Parser parser;
 
@@ -154,6 +171,15 @@ bool Server::start(
             }
 
             if (!parser.isComplete()) return; // Need more data
+
+            auto& sp_queue = (*sp_response_queues)[p_conn.get()];
+            if (!sp_queue) sp_queue = std::make_shared<ResponseQueue>();
+            auto sp_pending = sp_queue->enqueue();
+            if (!sp_pending) {
+                sp_queue->abort();
+                p_conn->forceClose();
+                return;
+            }
 
             // Get parsed request
             zane::http::Request& parsed = parser.result();
@@ -180,71 +206,46 @@ bool Server::start(
             auto p_conn_sp = p_conn;  // shared_ptr<TcpConnection> is already shared
             auto* p_loop_for_res = p_conn->getLoop();
 
-            // One-shot send callback (legacy). Used when the app calls
-            // res.send(body) directly — we build a complete HTTP response
-            // (with Content-Length) and hand it off in a single write.
-            auto send_cb = [p_conn_sp, p_loop_for_res](
+            // Both accepted responses and immediate rejections use the same
+            // request slot. Only the front response may write, including its
+            // streaming chunks; completion releases the next response.
+            auto write_response = [p_conn_sp, p_loop_for_res, sp_queue, sp_pending](
+                                      std::string bytes, bool complete) {
+                p_loop_for_res->runInLoop(
+                    [p_conn_sp, sp_queue, sp_pending,
+                     bytes = std::move(bytes), complete]() mutable {
+                        if (!p_conn_sp->connected()) return;
+                        if (!sp_queue->write(sp_pending, std::move(bytes), complete,
+                            [p_conn_sp](const std::string& data, bool close) {
+                                if (!data.empty()) p_conn_sp->send(data.data(), data.size());
+                                if (close) p_conn_sp->shutdown();
+                            })) {
+                            p_conn_sp->forceClose();
+                        }
+                    });
+            };
+
+            auto send_cb = [write_response](
                               int32_t status, const std::map<std::string, std::string>& headers,
                               const std::vector<uint8_t>& body) {
-                std::string http_resp = zane::http::buildResponse(
-                    status, "OK", headers, body.data(), body.size());
-                if (!p_conn_sp->connected()) return;
-                // Capture the data by value so the lambda owns the
-                // response bytes; the raw pointer into http_resp is
-                // stable until the lambda returns.
-                std::string resp_copy = std::move(http_resp);
-                p_loop_for_res->runInLoop(
-                    [p_conn_sp, resp_copy = std::move(resp_copy)]() {
-                        if (p_conn_sp->connected()) {
-                            p_conn_sp->send(resp_copy.data(), resp_copy.size());
-                        }
-                    });
+                write_response(zane::http::buildResponse(
+                    status, "OK", headers, body.data(), body.size()), true);
             };
 
-            // Streaming writeHead callback. Flushes status line + headers
-            // (with chunked framing by default) immediately, then the
-            // response stays open for writeChunk / endChunked calls.
-            auto write_head_cb = [p_conn_sp, p_loop_for_res](
+            auto write_head_cb = [write_response](
                                      int32_t status,
                                      const std::map<std::string, std::string>& headers) {
-                if (!p_conn_sp->connected()) return;
-                std::string head = zane::http::buildResponseHead(status, "OK", headers);
-                p_loop_for_res->runInLoop(
-                    [p_conn_sp, head = std::move(head)]() {
-                        if (p_conn_sp->connected()) {
-                            p_conn_sp->send(head.data(), head.size());
-                        }
-                    });
+                write_response(zane::http::buildResponseHead(status, "OK", headers), false);
             };
 
-            // Streaming writeChunk callback. Frames the bytes as a single
-            // chunked-encoding frame (<hex-size>\r\n<data>\r\n) and writes
-            // it. Empty chunks are rejected by buildChunk() and become no-ops.
-            auto write_chunk_cb = [p_conn_sp, p_loop_for_res](
-                                      const std::vector<uint8_t>& chunk) {
+            auto write_chunk_cb = [write_response](const std::vector<uint8_t>& chunk) {
                 if (chunk.empty()) return;
-                if (!p_conn_sp->connected()) return;
                 std::string framed = zane::http::buildChunk(chunk.data(), chunk.size());
-                if (framed.empty()) return;
-                p_loop_for_res->runInLoop(
-                    [p_conn_sp, framed = std::move(framed)]() {
-                        if (p_conn_sp->connected()) {
-                            p_conn_sp->send(framed.data(), framed.size());
-                        }
-                    });
+                if (!framed.empty()) write_response(std::move(framed), false);
             };
 
-            // Streaming end callback. Emits the chunked terminator
-            // "0\r\n\r\n" so the client knows the body is complete.
-            auto end_chunked_cb = [p_conn_sp, p_loop_for_res]() {
-                if (!p_conn_sp->connected()) return;
-                std::string term = zane::http::buildChunkEnd();
-                p_loop_for_res->runInLoop(
-                    [p_conn_sp, term = std::move(term)]() {
-                        if (p_conn_sp->connected()) {
-                            p_conn_sp->send(term.data(), term.size());
-                        }
-                    });
+            auto end_chunked_cb = [write_response]() {
+                write_response(zane::http::buildChunkEnd(), true);
             };
 
             auto* p_res = new Response(
@@ -255,7 +256,58 @@ bool Server::start(
             );
 
             if (handler) {
-                handler(p_req, p_res);
+                // Issue: V8 main-thread safety. `handler` enters the isolate and
+                // calls the app's JS `fetch` function. This callback, however,
+                // runs on Trantor's event-loop thread — NOT on the thread that
+                // owns the isolate. Calling into V8 from here races with the
+                // main loop's timer/TaskQueue/microtask machinery (fetch() may
+                // call setTimeout(), fs, queueMicrotask...), which touches the
+                // same isolate state without synchronization: intermittent
+                // crashes and corrupted promise state.
+                //
+                // Fix: hand the request to the main thread and return. The JS
+                // fetch handler then runs where every other JS entry point
+                // runs, inside the loop's HandleScope/Context, between timer
+                // ticks. Writes are already loop-safe because every Response
+                // callback posts through p_conn->getLoop().
+                //
+                // `handler` is copied into the thunk so a request arriving
+                // after shutdown still owns a valid callable; the thunk is
+                // dropped by postToMainThread() when the loop is gone.
+                // Shared ownership covers copies of the thunk, while the
+                // unique owners release exactly once when V8 takes ownership.
+                struct PendingRequest {
+                    std::unique_ptr<Request> up_req;
+                    std::unique_ptr<Response> up_res;
+                };
+                auto sp_work = std::make_shared<PendingRequest>();
+                sp_work->up_req.reset(p_req);
+                sp_work->up_res.reset(p_res);
+                const size_t retained_bytes = p_req->retainedBytes() + sizeof(Response);
+
+                bool posted = zane::builtin::postToMainThread(
+                    [handler, sp_work](v8::Isolate*, v8::Local<v8::Context>) {
+                        auto* p_owned_req = sp_work->up_req.release();
+                        auto* p_owned_res = sp_work->up_res.release();
+                        handler(p_owned_req, p_owned_res);
+                    }, retained_bytes);
+
+                if (!posted) {
+                    // Event loop gone or queue overloaded: send 503 Service Unavailable
+                    LOG_WARN << "Dropping request: main event loop is not running or queue is full";
+                    if (!zane::builtin::hasMainThreadLoop()) {
+                        // Earlier accepted work may have been discarded during
+                        // shutdown; waiting for its response would never finish.
+                        sp_queue->abort();
+                        p_conn->forceClose();
+                    } else if (p_res && !p_res->hasEnded()) {
+                        sp_queue->closeAfter(sp_pending);
+                        p_res->setStatus(503);
+                        p_res->setHeader("Connection", "close");
+                        p_res->send("Service Unavailable");
+                    }
+                    // sp_work deletes rejected native objects when leaving scope
+                }
             }
         });
 
@@ -286,6 +338,10 @@ void Server::stop(std::function<void()> on_stop) {
     if (up_loop_thread) {
         up_loop_thread->wait();
     }
+
+    // Release the fetch/context handles after the loop has stopped. Pending
+    // dispatch thunks own their handler copies independently.
+    if (up_tcp_server) up_tcp_server->setRecvMessageCallback({});
 
     m_active_server_count--;
     m_running = false;
@@ -416,8 +472,12 @@ void Server::serveCallback(const v8::FunctionCallbackInfo<v8::Value>& args) {
     // reach them — including the async case where fetch() returns a Promise.
     RequestHandler handler = [p_isolate, p_context_global, p_fetch_global, p_error_global](
                                  Request* p_req, Response* p_res) {
-        v8::Locker locker(p_isolate);
-        v8::Isolate::Scope isolate_scope(p_isolate);
+        // NOTE: no v8::Locker / Isolate::Enter here. This handler is invoked
+        // from `zane::builtin::postToMainThread` on the event-loop thread, which
+        // already owns the isolate and entered a HandleScope + Context. Adding
+        // a Locker on the owning thread is legal but pointless, and made it
+        // ambiguous which thread was responsible for the isolate — see the
+        // dispatch comment in start().
         v8::HandleScope handle_scope(p_isolate);
         v8::Local<v8::Context> context = p_context_global->Get(p_isolate);
         v8::Context::Scope context_scope(context);
@@ -510,31 +570,14 @@ void Server::serveCallback(const v8::FunctionCallbackInfo<v8::Value>& args) {
         return;
     }
 
-    // Return server object with .close() method using data.
-    // Issue #11: previously the server could leak if the caller lost the
-    // reference without calling close() — the `new Server()` was owned
-    // only by the closure on the close() function template. We now
-    // hold a v8::Global to the server object and schedule a weak
-    // callback so GC of the returned object automatically tears down
-    // and deletes the C++ server. close() is still the recommended
-    // path (synchronous, immediate), but the leak is closed.
-    //
-    // Coordination between close() and the weak callback: both paths
-    // call stop() (idempotent) and then delete. The Server's isStopped()
-    // flag becomes true after the first stop, so the second deleter
-    // becomes a no-op. To avoid the second deleter being a pure
-    // undefined-behavior read, we set p_server->m_running = false in
-    // ~Server() too — the second delete is just delete on an already-
-    // finished object, which is safe.
+    // The close function retains this token through its V8 Data. The server
+    // wrapper retains the function, so the token is collected only when both
+    // the wrapper and any detached close function are unreachable.
     auto close_fn = v8::FunctionTemplate::New(p_isolate,
         [](const v8::FunctionCallbackInfo<v8::Value>& args) {
             auto* p_srv = static_cast<Server*>(args.Data().As<v8::External>()->Value());
-            if (p_srv && !p_srv->isStopped()) {
-                p_srv->stop();
-                delete p_srv;
-            }
-        },
-        v8::External::New(p_isolate, p_server));
+            if (p_srv) p_srv->stop();
+        }, v8::External::New(p_isolate, p_server));
 
     v8::Local<v8::ObjectTemplate> server_tpl = v8::ObjectTemplate::New(p_isolate);
     server_tpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "close"),
@@ -542,18 +585,13 @@ void Server::serveCallback(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
     v8::Local<v8::Object> server_obj = server_tpl->NewInstance(context).ToLocalChecked();
 
-    // Schedule a weak callback on the returned object. When the JS GC
-    // collects it: stop the server if still running, then delete.
-    // Use a v8::Global so the callback fires exactly once; after
-    // V8 calls the callback the global is cleared automatically.
-    auto* p_server_global = new v8::Global<v8::Object>(p_isolate, server_obj);
-    p_server_global->SetWeak(p_server, [](const v8::WeakCallbackInfo<Server>& data) {
-        Server* p_srv = data.GetParameter();
-        if (p_srv && !p_srv->isStopped()) {
-            p_srv->stop();
+    p_server->m_self.Reset(p_isolate, server_obj);
+    p_server->m_self.SetWeak(p_server,
+        [](const v8::WeakCallbackInfo<Server>& data) {
+            Server* p_srv = data.GetParameter();
+            p_srv->m_self.Reset();
             delete p_srv;
-        }
-    }, v8::WeakCallbackType::kParameter);
+        }, v8::WeakCallbackType::kParameter);
 
     args.GetReturnValue().Set(server_obj);
 }

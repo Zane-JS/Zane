@@ -113,15 +113,22 @@ v8::Local<v8::Object> Request::wrap(v8::Isolate* p_isolate, v8::Local<v8::Contex
     // Transfer ownership to V8: free the C++ Request when the JS wrapper is GC'd.
     // This keeps `this` alive as long as the JS object is reachable, which is
     // required because async fetch handlers may hold/use the request long after
-    // the trantor message callback returns.
-    v8::Global<v8::Object> global_obj(p_isolate, obj);
-    global_obj.SetWeak(this, weakCallback, v8::WeakCallbackType::kParameter);
+    // the recv callback returns.
+    //
+    // The handle lives on the object and is made weak in place, so the callback
+    // can reset the very handle it fired for (see Response::wrap).
+    m_self.Reset(p_isolate, obj);
+    m_self.SetWeak(this, weakCallback, v8::WeakCallbackType::kParameter);
 
     return handle_scope.Escape(obj);
 }
 
 void Request::weakCallback(const v8::WeakCallbackInfo<Request>& data) {
-    delete data.GetParameter();
+    Request* p_req = data.GetParameter();
+    if (!p_req) return;
+    // V8 requires the callback to reset the handle it fired for.
+    p_req->m_self.Reset();
+    delete p_req;
 }
 
 Request* Request::unwrap(v8::Local<v8::Object> obj) {

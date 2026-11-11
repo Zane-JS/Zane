@@ -1,4 +1,5 @@
 #include "builtin.hpp"
+#include "main_thread_dispatch.hpp"
 #include "server/server.hpp"
 #include "../adaptive_io.hpp"
 
@@ -55,7 +56,11 @@ void registerBuiltins(v8::Isolate* p_isolate, v8::Local<v8::Context> context, v8
 }
 
 bool hasActiveWork() {
-    return Server::hasActiveServers();
+    // A live listener keeps the process alive, and so does any callback posted
+    // from a background thread (an accepted connection waiting for its JS
+    // fetch handler, a pending write completion) — otherwise the loop could
+    // decide there is nothing left to do and exit with requests in flight.
+    return Server::hasActiveServers() || pendingMainThreadTasks() > 0;
 }
 
 } // namespace builtin

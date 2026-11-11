@@ -51,15 +51,31 @@ class TaskQueue {
         return m_queue.empty();
     }
 
-    // New: Blocking wait for the main thread
+    // Blocking wait for the main thread.
+    //
+    // The predicate re-checks the queue: enqueue() takes the same mutex, so a
+    // task pushed between the isEmpty() check above and the wait cannot be
+    // lost. Waking up spuriously is harmless.
     void wait(std::chrono::milliseconds timeout) {
         std::unique_lock<std::mutex> lock(m_mutex);
-        if (!m_queue.empty())
-            return;
-        m_condition.wait_for(lock, timeout);
+        m_condition.wait_for(lock, timeout, [this] { return !m_queue.empty() || m_notified; });
+        m_notified = false;
+    }
+
+    // Wake the main thread without enqueueing anything.
+    //
+    // Producer threads that need the event loop to re-evaluate its state (new
+    // pending socket work, a received request, a closed server) call this so
+    // the loop stops sleeping for the full wait timeout. Safe to call from any
+    // thread and from inside wait().
+    void notify() {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_notified = true;
+        m_condition.notify_one();
     }
 
   private:
+    bool m_notified = false;
     std::queue<Task*> m_queue;
     std::mutex m_mutex;
     std::condition_variable m_condition;

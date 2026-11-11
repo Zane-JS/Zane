@@ -53,10 +53,12 @@ class Server {
     // V8 static callback: Zane.serve() (used by builtin registration)
     static void serveCallback(const v8::FunctionCallbackInfo<v8::Value>& args);
 
-    // True if `stop()` has been called (or the weak callback has run).
-    // The weak callback and the explicit close() both need to coordinate
-    // so we don't double-delete the Server.
+    // True after an explicit stop; the token's weak callback owns deletion.
     bool isStopped() const { return !m_running; }
+
+    // Weak handle to the token retained by the close function. Collection
+    // deletes the server when neither the wrapper nor close is reachable.
+    v8::Global<v8::Object> m_self;
 
   private:
     std::unique_ptr<trantor::TcpServer> up_tcp_server;

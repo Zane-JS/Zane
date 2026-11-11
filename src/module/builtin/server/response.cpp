@@ -234,20 +234,28 @@ v8::Local<v8::Object> Response::wrap(v8::Isolate* p_isolate, v8::Local<v8::Conte
     v8::Local<v8::Object> obj = tpl->NewInstance(context).ToLocalChecked();
     obj->SetInternalField(0, v8::External::New(p_isolate, this));
 
-    // Transfer ownership to V8. The weak callback only deletes the object once
-    // the response has ended, so a still-pending async response is kept alive
-    // even if JS drops its reference to the wrapper before calling send().
-    v8::Global<v8::Object> global_obj(p_isolate, obj);
-    global_obj.SetWeak(this, weakCallback, v8::WeakCallbackType::kParameter);
+    // Transfer ownership to V8: the weak callback frees the C++ object once the
+    // JS wrapper is collected.
+    //
+    // The handle is stored on the object (m_self) and made weak in place. V8
+    // requires the weak callback to reset this exact handle; keeping it in a
+    // local that dies at the end of wrap() causes
+    // "Handle not reset in first callback".
+    m_self.Reset(p_isolate, obj);
+    m_self.SetWeak(this, weakCallback, v8::WeakCallbackType::kParameter);
 
     return handle_scope.Escape(obj);
 }
 
 void Response::weakCallback(const v8::WeakCallbackInfo<Response>& data) {
     Response* p_res = data.GetParameter();
-    // Safety net: an async fetch handler may drop the response object before it
-    // has ended. Force-end it (empty body) so the underlying TCP reply is still
-    // flushed and the connection is released, then free the memory.
+    if (!p_res) return;
+    // V8 forbids calling back into the V8 API from a first-pass weak callback,
+    // and requires the handle to be reset. Reset first, then do pure C++ work.
+    p_res->m_self.Reset();
+    // A still-pending response must still produce a reply, otherwise the client
+    // hangs and the connection is never released. send("") only touches the
+    // connection's event loop (a plain std::function), never V8.
     if (!p_res->m_has_ended) {
         p_res->send("");
     }

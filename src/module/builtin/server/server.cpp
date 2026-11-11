@@ -133,7 +133,13 @@ bool Server::start(
     // Set connection callback
     up_tcp_server->setConnectionCallback([this, sp_response_queues](const trantor::TcpConnectionPtr& p_conn) {
         this->onConnection(p_conn);
-        if (!p_conn->connected()) sp_response_queues->erase(p_conn.get());
+        if (!p_conn->connected()) {
+            auto it = sp_response_queues->find(p_conn.get());
+            if (it != sp_response_queues->end()) {
+                it->second->abort();
+                sp_response_queues->erase(it);
+            }
+        }
     });
 
     // Set message callback — use custom HTTP parser instead of llhttp
@@ -149,6 +155,9 @@ bool Server::start(
                 }
             }
 
+            auto it = sp_response_queues->find(p_conn.get());
+            if (it != sp_response_queues->end() && it->second->closing()) return;
+
             zane::http::Parser parser;
 
             const char* p_data = p_msg->peek();
@@ -162,6 +171,15 @@ bool Server::start(
             }
 
             if (!parser.isComplete()) return; // Need more data
+
+            auto& sp_queue = (*sp_response_queues)[p_conn.get()];
+            if (!sp_queue) sp_queue = std::make_shared<ResponseQueue>();
+            auto sp_pending = sp_queue->enqueue();
+            if (!sp_pending) {
+                sp_queue->abort();
+                p_conn->forceClose();
+                return;
+            }
 
             // Get parsed request
             zane::http::Request& parsed = parser.result();
@@ -188,10 +206,6 @@ bool Server::start(
             auto p_conn_sp = p_conn;  // shared_ptr<TcpConnection> is already shared
             auto* p_loop_for_res = p_conn->getLoop();
 
-            auto& sp_queue = (*sp_response_queues)[p_conn.get()];
-            if (!sp_queue) sp_queue = std::make_shared<ResponseQueue>();
-            auto sp_pending = sp_queue->enqueue();
-
             // Both accepted responses and immediate rejections use the same
             // request slot. Only the front response may write, including its
             // streaming chunks; completion releases the next response.
@@ -201,10 +215,13 @@ bool Server::start(
                     [p_conn_sp, sp_queue, sp_pending,
                      bytes = std::move(bytes), complete]() mutable {
                         if (!p_conn_sp->connected()) return;
-                        sp_queue->write(sp_pending, std::move(bytes), complete,
-                            [p_conn_sp](const std::string& data) {
-                                p_conn_sp->send(data.data(), data.size());
-                            });
+                        if (!sp_queue->write(sp_pending, std::move(bytes), complete,
+                            [p_conn_sp](const std::string& data, bool close) {
+                                if (!data.empty()) p_conn_sp->send(data.data(), data.size());
+                                if (close) p_conn_sp->shutdown();
+                            })) {
+                            p_conn_sp->forceClose();
+                        }
                     });
             };
 
@@ -271,6 +288,7 @@ bool Server::start(
                     // Event loop gone or queue overloaded: send 503 Service Unavailable
                     LOG_WARN << "Dropping request: main event loop is not running or queue is full";
                     if (p_res && !p_res->hasEnded()) {
+                        sp_queue->closeAfter(sp_pending);
                         p_res->setStatus(503);
                         p_res->setHeader("Connection", "close");
                         p_res->send("Service Unavailable");

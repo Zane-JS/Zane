@@ -573,16 +573,11 @@ void Server::serveCallback(const v8::FunctionCallbackInfo<v8::Value>& args) {
     // The close function retains this token through its V8 Data. The server
     // wrapper retains the function, so the token is collected only when both
     // the wrapper and any detached close function are unreachable.
-    auto token_tpl = v8::ObjectTemplate::New(p_isolate);
-    token_tpl->SetInternalFieldCount(1);
-    auto token = token_tpl->NewInstance(context).ToLocalChecked();
-    token->SetAlignedPointerInInternalField(0, p_server);
     auto close_fn = v8::FunctionTemplate::New(p_isolate,
         [](const v8::FunctionCallbackInfo<v8::Value>& args) {
-            auto token = args.Data().As<v8::Object>();
-            auto* p_srv = static_cast<Server*>(token->GetAlignedPointerFromInternalField(0));
+            auto* p_srv = static_cast<Server*>(args.Data().As<v8::External>()->Value());
             if (p_srv) p_srv->stop();
-        }, token);
+        }, v8::External::New(p_isolate, p_server));
 
     v8::Local<v8::ObjectTemplate> server_tpl = v8::ObjectTemplate::New(p_isolate);
     server_tpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "close"),
@@ -590,7 +585,7 @@ void Server::serveCallback(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
     v8::Local<v8::Object> server_obj = server_tpl->NewInstance(context).ToLocalChecked();
 
-    p_server->m_self.Reset(p_isolate, token);
+    p_server->m_self.Reset(p_isolate, server_obj);
     p_server->m_self.SetWeak(p_server,
         [](const v8::WeakCallbackInfo<Server>& data) {
             Server* p_srv = data.GetParameter();

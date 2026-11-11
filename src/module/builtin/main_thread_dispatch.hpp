@@ -30,10 +30,14 @@ void setMainThreadLoop(v8::Isolate* p_isolate, v8::Local<v8::Context> context);
 // True when a main thread is currently draining this queue.
 bool hasMainThreadLoop();
 
+// Maximum tasks queued before rejecting new incoming background tasks.
+// Prevents unbounded memory growth under overload.
+constexpr size_t kMaxMainThreadQueueSize = 10000;
+
 // Queue `fn` to run on the main thread. Safe to call from any thread.
 // The thunk runs inside a HandleScope with the stored context entered, so it
 // may create and use Local handles. Returns false if no main thread loop is
-// active (the runtime is shutting down) — the thunk is dropped, not run.
+// active or if the queue is full (the thunk is rejected and dropped).
 bool postToMainThread(std::function<void(v8::Isolate*, v8::Local<v8::Context>)> fn);
 
 // Run the queued thunks on the calling (main) thread. Called once per event

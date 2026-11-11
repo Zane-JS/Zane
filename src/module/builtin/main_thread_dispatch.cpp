@@ -56,6 +56,10 @@ bool postToMainThread(Thunk fn) {
     if (!hasMainThreadLoop()) return false;
     {
         std::lock_guard<std::mutex> lock(queueMutex());
+        if (!hasMainThreadLoop()) return false;
+        if (queue().size() >= kMaxMainThreadQueueSize) {
+            return false;
+        }
         queue().push_back(std::move(fn));
     }
     // Wake the loop: it may be parked in TaskQueue::wait() for up to its poll

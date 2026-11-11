@@ -274,17 +274,20 @@ bool Server::start(
                 // `handler` is copied into the thunk so a request arriving
                 // after shutdown still owns a valid callable; the thunk is
                 // dropped by postToMainThread() when the loop is gone.
+                // Wrap raw pointers in std::shared_ptr inside lambda so if the thunk
+                // is dropped on shutdown or rejected, the C++ objects are safely freed.
+                auto sp_req = std::shared_ptr<Request>(p_req);
+                auto sp_res = std::shared_ptr<Response>(p_res);
+
                 bool posted = zane::builtin::postToMainThread(
-                    [handler, p_req, p_res](v8::Isolate*, v8::Local<v8::Context>) {
-                        handler(p_req, p_res);
+                    [handler, sp_req, sp_res](v8::Isolate*, v8::Local<v8::Context>) {
+                        handler(sp_req.get(), sp_res.get());
                     });
 
                 if (!posted) {
-                    // Event loop already gone: free the C++ objects. They were
-                    // never handed to V8, so nothing else owns them.
-                    LOG_WARN << "Dropping request: main event loop is not running";
-                    delete p_req;
-                    delete p_res;
+                    // Event loop gone or queue overloaded: free immediately and send 503 if still open
+                    LOG_WARN << "Dropping request: main event loop is not running or queue is full";
+                    // sp_req & sp_res will automatically delete p_req & p_res when leaving scope
                 }
             }
         });

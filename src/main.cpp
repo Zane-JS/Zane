@@ -632,6 +632,12 @@ class Runtime {
 
         // Event Loop
         zane::builtin::setMainThreadLoop(p_isolate, context);
+        struct MainLoopScopeGuard {
+            ~MainLoopScopeGuard() {
+                zane::builtin::setMainThreadLoop(nullptr, v8::Local<v8::Context>());
+            }
+        } loop_guard;
+
         bool keep_running = true;
         while (keep_running) {
             // 1. Process Tasks from TaskQueue
@@ -706,8 +712,7 @@ class Runtime {
 
         // The event loop has exited: the background HTTP server threads must
         // stop posting V8 work into an isolate nobody is servicing any more.
-        zane::builtin::setMainThreadLoop(nullptr, v8::Local<v8::Context>());
-
+        // Handled automatically by loop_guard destructor on any exit path.
         return true;
     }
 

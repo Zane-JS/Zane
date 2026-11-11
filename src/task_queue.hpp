@@ -58,7 +58,8 @@ class TaskQueue {
     // lost. Waking up spuriously is harmless.
     void wait(std::chrono::milliseconds timeout) {
         std::unique_lock<std::mutex> lock(m_mutex);
-        m_condition.wait_for(lock, timeout, [this] { return !m_queue.empty(); });
+        m_condition.wait_for(lock, timeout, [this] { return !m_queue.empty() || m_notified; });
+        m_notified = false;
     }
 
     // Wake the main thread without enqueueing anything.
@@ -69,10 +70,12 @@ class TaskQueue {
     // thread and from inside wait().
     void notify() {
         std::unique_lock<std::mutex> lock(m_mutex);
+        m_notified = true;
         m_condition.notify_one();
     }
 
   private:
+    bool m_notified = false;
     std::queue<Task*> m_queue;
     std::mutex m_mutex;
     std::condition_variable m_condition;

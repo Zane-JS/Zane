@@ -274,26 +274,39 @@ bool Server::start(
                 // `handler` is copied into the thunk so a request arriving
                 // after shutdown still owns a valid callable; the thunk is
                 // dropped by postToMainThread() when the loop is gone.
-                // Wrap raw pointers in std::shared_ptr inside lambda so if the thunk
-                // is dropped on shutdown or rejected, the C++ objects are safely freed.
-                auto sp_req = std::shared_ptr<Request>(p_req);
-                auto sp_res = std::shared_ptr<Response>(p_res);
+                // Shared ownership covers copies of the thunk, while the
+                // unique owners release exactly once when V8 takes ownership.
+                struct PendingRequest {
+                    std::unique_ptr<Request> up_req;
+                    std::unique_ptr<Response> up_res;
+                };
+                auto sp_work = std::make_shared<PendingRequest>();
+                sp_work->up_req.reset(p_req);
+                sp_work->up_res.reset(p_res);
+                const size_t retained_bytes = p_req->retainedBytes() + sizeof(Response);
 
                 bool posted = zane::builtin::postToMainThread(
-                    [handler, sp_req, sp_res](v8::Isolate*, v8::Local<v8::Context>) {
-                        handler(sp_req.get(), sp_res.get());
-                    });
+                    [handler, sp_work](v8::Isolate*, v8::Local<v8::Context>) {
+                        auto* p_owned_req = sp_work->up_req.release();
+                        auto* p_owned_res = sp_work->up_res.release();
+                        handler(p_owned_req, p_owned_res);
+                    }, retained_bytes);
 
                 if (!posted) {
                     // Event loop gone or queue overloaded: send 503 Service Unavailable
                     LOG_WARN << "Dropping request: main event loop is not running or queue is full";
-                    if (p_res && !p_res->hasEnded()) {
+                    if (!zane::builtin::hasMainThreadLoop()) {
+                        // Earlier accepted work may have been discarded during
+                        // shutdown; waiting for its response would never finish.
+                        sp_queue->abort();
+                        p_conn->forceClose();
+                    } else if (p_res && !p_res->hasEnded()) {
                         sp_queue->closeAfter(sp_pending);
                         p_res->setStatus(503);
                         p_res->setHeader("Connection", "close");
                         p_res->send("Service Unavailable");
                     }
-                    // sp_req & sp_res will automatically delete p_req & p_res when leaving scope
+                    // sp_work deletes rejected native objects when leaving scope
                 }
             }
         });
@@ -325,6 +338,10 @@ void Server::stop(std::function<void()> on_stop) {
     if (up_loop_thread) {
         up_loop_thread->wait();
     }
+
+    // Release the fetch/context handles after the loop has stopped. Pending
+    // dispatch thunks own their handler copies independently.
+    if (up_tcp_server) up_tcp_server->setRecvMessageCallback({});
 
     m_active_server_count--;
     m_running = false;
@@ -553,38 +570,19 @@ void Server::serveCallback(const v8::FunctionCallbackInfo<v8::Value>& args) {
         return;
     }
 
-    // Return server object with .close() method using data.
-    // Issue #11: previously the server could leak if the caller lost the
-    // reference without calling close() — the `new Server()` was owned
-    // only by the closure on the close() function template. We now
-    // hold a v8::Global to the server object and schedule a weak
-    // callback so GC of the returned object automatically tears down
-    // and deletes the C++ server. close() is still the recommended
-    // path (synchronous, immediate), but the leak is closed.
-    //
-    // Coordination between close() and the weak callback: both paths
-    // call stop() (idempotent) and then delete. The Server's isStopped()
-    // flag becomes true after the first stop, so the second deleter
-    // becomes a no-op. To avoid the second deleter being a pure
-    // undefined-behavior read, we set p_server->m_running = false in
-    // ~Server() too — the second delete is just delete on an already-
-    // finished object, which is safe.
+    // The close function retains this token through its V8 Data. The server
+    // wrapper retains the function, so the token is collected only when both
+    // the wrapper and any detached close function are unreachable.
+    auto token_tpl = v8::ObjectTemplate::New(p_isolate);
+    token_tpl->SetInternalFieldCount(1);
+    auto token = token_tpl->NewInstance(context).ToLocalChecked();
+    token->SetAlignedPointerInInternalField(0, p_server);
     auto close_fn = v8::FunctionTemplate::New(p_isolate,
         [](const v8::FunctionCallbackInfo<v8::Value>& args) {
-            auto* p_srv = static_cast<Server*>(args.Data().As<v8::External>()->Value());
-            if (p_srv && !p_srv->isStopped()) {
-                p_srv->stop();
-                // Tear down the weak reference before deleting: otherwise the
-                // weak callback would later fire on freed memory. ClearWeak()
-                // turns the handle strong again, so it is safe to reset.
-                if (!p_srv->m_self.IsEmpty()) {
-                    p_srv->m_self.ClearWeak();
-                    p_srv->m_self.Reset();
-                }
-                delete p_srv;
-            }
-        },
-        v8::External::New(p_isolate, p_server));
+            auto token = args.Data().As<v8::Object>();
+            auto* p_srv = static_cast<Server*>(token->GetAlignedPointerFromInternalField(0));
+            if (p_srv) p_srv->stop();
+        }, token);
 
     v8::Local<v8::ObjectTemplate> server_tpl = v8::ObjectTemplate::New(p_isolate);
     server_tpl->Set(v8::String::NewFromUtf8Literal(p_isolate, "close"),
@@ -592,21 +590,10 @@ void Server::serveCallback(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
     v8::Local<v8::Object> server_obj = server_tpl->NewInstance(context).ToLocalChecked();
 
-    // Schedule a weak callback on m_self. When the JS GC
-    // collects the wrapper: stop the server if still running, then delete the
-    // C++ object.
-    //
-    // V8 requires a weak callback to reset the handle it fired for; leaving it
-    // set trips "Handle not reset in first callback" on a later GC.
-    p_server->m_self.Reset(p_isolate, server_obj);
+    p_server->m_self.Reset(p_isolate, token);
     p_server->m_self.SetWeak(p_server,
         [](const v8::WeakCallbackInfo<Server>& data) {
             Server* p_srv = data.GetParameter();
-            if (!p_srv) return;
-            if (!p_srv->isStopped()) {
-                p_srv->stop();
-            }
-            // Reset the handle V8 just fired on the Server object before deleting
             p_srv->m_self.Reset();
             delete p_srv;
         }, v8::WeakCallbackType::kParameter);

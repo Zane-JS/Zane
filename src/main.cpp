@@ -592,6 +592,13 @@ class Runtime {
         v8::Local<v8::Context> context = m_context.Get(p_isolate);
         v8::Context::Scope context_scope(context);
 
+        zane::builtin::setMainThreadLoop(p_isolate, context);
+        struct MainLoopScopeGuard {
+            ~MainLoopScopeGuard() {
+                zane::builtin::setMainThreadLoop(nullptr, v8::Local<v8::Context>());
+            }
+        } loop_guard;
+
         v8::TryCatch try_catch(p_isolate);
 
         v8::Local<v8::String> v8_source = v8::String::NewFromUtf8(p_isolate, source.c_str()).ToLocalChecked();
@@ -631,13 +638,6 @@ class Runtime {
         }
 
         // Event Loop
-        zane::builtin::setMainThreadLoop(p_isolate, context);
-        struct MainLoopScopeGuard {
-            ~MainLoopScopeGuard() {
-                zane::builtin::setMainThreadLoop(nullptr, v8::Local<v8::Context>());
-            }
-        } loop_guard;
-
         bool keep_running = true;
         while (keep_running) {
             // 1. Process Tasks from TaskQueue

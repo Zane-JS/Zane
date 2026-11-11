@@ -21,6 +21,17 @@ class Request {
     auto pathname() const -> const std::string& { return m_pathname; }
     auto headers() const -> const std::map<std::string, std::string>& { return m_headers; }
 
+    // Native storage retained while a request waits for main-thread dispatch.
+    size_t retainedBytes() const {
+        size_t bytes = sizeof(Request) + m_method.capacity() + m_path.capacity() +
+                       m_pathname.capacity() + m_body.capacity();
+        for (const auto& header : m_headers) {
+            bytes += sizeof(header) + 4 * sizeof(void*) +
+                     header.first.capacity() + header.second.capacity();
+        }
+        return bytes;
+    }
+
     // Body helpers (C++ → V8)
     v8::Local<v8::Value> json(v8::Isolate* p_isolate, v8::Local<v8::Context> context);
     v8::Local<v8::String> text(v8::Isolate* p_isolate);

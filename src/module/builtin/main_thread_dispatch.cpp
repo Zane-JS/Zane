@@ -19,8 +19,15 @@ std::mutex& queueMutex() {
     return s_mutex;
 }
 
-std::deque<Thunk>& queue() {
-    static std::deque<Thunk> s_queue;
+struct QueuedThunk {
+    Thunk m_fn;
+    size_t m_retained_bytes;
+};
+
+size_t g_queued_bytes = 0; // guarded by queueMutex()
+
+std::deque<QueuedThunk>& queue() {
+    static std::deque<QueuedThunk> s_queue;
     return s_queue;
 }
 
@@ -33,34 +40,38 @@ constexpr int32_t kMaxTasksPerDrain = 1024;
 } // namespace
 
 void setMainThreadLoop(v8::Isolate* p_isolate, v8::Local<v8::Context> /*context*/) {
-    g_main_isolate.store(p_isolate, std::memory_order_release);
 
     // Shutting down: the loop will never run again, so drop anything still
     // queued. Destroying the thunks releases the Request/Response objects they
     // captured instead of leaking them for the lifetime of the process.
-    if (!p_isolate) {
-        std::deque<Thunk> dropped;
-        {
-            std::lock_guard<std::mutex> lock(queueMutex());
+    std::deque<QueuedThunk> dropped;
+    {
+        std::lock_guard<std::mutex> lock(queueMutex());
+        g_main_isolate.store(p_isolate, std::memory_order_release);
+        if (!p_isolate) {
             dropped.swap(queue());
+            g_queued_bytes = 0;
         }
-        // `dropped` is destroyed here, outside the lock.
     }
+    // Destroy rejected work outside the lock.
+
 }
 
 bool hasMainThreadLoop() {
     return g_main_isolate.load(std::memory_order_acquire) != nullptr;
 }
 
-bool postToMainThread(Thunk fn) {
+bool postToMainThread(Thunk fn, size_t retained_bytes) {
     if (!hasMainThreadLoop()) return false;
     {
         std::lock_guard<std::mutex> lock(queueMutex());
         if (!hasMainThreadLoop()) return false;
-        if (queue().size() >= kMaxMainThreadQueueSize) {
+        if (queue().size() >= kMaxMainThreadQueueSize ||
+            retained_bytes > kMaxMainThreadQueueBytes - g_queued_bytes) {
             return false;
         }
-        queue().push_back(std::move(fn));
+        queue().push_back({std::move(fn), retained_bytes});
+        g_queued_bytes += retained_bytes;
     }
     // Wake the loop: it may be parked in TaskQueue::wait() for up to its poll
     // timeout. Without this a request would sit until the next timer tick.
@@ -83,7 +94,8 @@ void drainMainThreadTasks(v8::Isolate* p_isolate, v8::Local<v8::Context> context
         {
             std::lock_guard<std::mutex> lock(queueMutex());
             if (queue().empty()) return;
-            fn = std::move(queue().front());
+            g_queued_bytes -= queue().front().m_retained_bytes;
+            fn = std::move(queue().front().m_fn);
             queue().pop_front();
         }
 

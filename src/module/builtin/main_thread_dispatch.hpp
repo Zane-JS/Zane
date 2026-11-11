@@ -33,12 +33,13 @@ bool hasMainThreadLoop();
 // Maximum tasks queued before rejecting new incoming background tasks.
 // Prevents unbounded memory growth under overload.
 constexpr size_t kMaxMainThreadQueueSize = 10000;
+constexpr size_t kMaxMainThreadQueueBytes = 64 * 1024 * 1024;
 
 // Queue `fn` to run on the main thread. Safe to call from any thread.
 // The thunk runs inside a HandleScope with the stored context entered, so it
 // may create and use Local handles. Returns false if no main thread loop is
 // active or if the queue is full (the thunk is rejected and dropped).
-bool postToMainThread(std::function<void(v8::Isolate*, v8::Local<v8::Context>)> fn);
+bool postToMainThread(std::function<void(v8::Isolate*, v8::Local<v8::Context>)> fn, size_t retained_bytes = 0);
 
 // Run the queued thunks on the calling (main) thread. Called once per event
 // loop iteration, before timers, so I/O callbacks are ordered ahead of the
